@@ -1,0 +1,52 @@
+services:
+  postgres:
+    image: postgres:13.1
+    container_name: kazi-postgres
+    environment:
+      POSTGRES_USER: kazi_user
+      POSTGRES_PASSWORD: kazi_password
+      POSTGRES_DB: kazi_db
+      POSTGRES_HOST_AUTH_METHOD: trust
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    networks:
+      - kazi-network
+
+  minio:
+    image: quay.io/minio/minio:RELEASE.2024-09-09T16-59-28Z
+    container_name: kazi-minio
+    ports:
+      - "9000:9000"
+      - "9001:9001"
+    env_file:
+      - ./minio_config/config.env
+    volumes:
+      - ./minio_data:/mnt/data
+      - ./minio_config:/root/.minio
+    command: server --address ":9000" --console-address ":9001" /mnt/data
+    networks:
+      - kazi-network
+
+  backend:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: kazi-backend
+    ports:
+      - "8080:8080"
+    depends_on:
+      - postgres
+      - minio
+    env_file:
+      - .env
+    networks:
+      - kazi-network
+
+volumes:
+  postgres_data:
+
+networks:
+  kazi-network:
+    driver: bridge
