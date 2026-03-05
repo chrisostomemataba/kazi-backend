@@ -17,8 +17,8 @@ type Client struct {
 type Hub struct {
 	clients    map[uuid.UUID]*Client
 	broadcast  chan []byte
-	register   chan *Client
-	unregister chan *Client
+	Register   chan *Client
+	Unregister chan *Client
 	mu         sync.RWMutex
 }
 
@@ -26,21 +26,21 @@ func NewHub() *Hub {
 	return &Hub{
 		clients:    make(map[uuid.UUID]*Client),
 		broadcast:  make(chan []byte),
-		register:   make(chan *Client),
-		unregister: make(chan *Client),
+		Register:   make(chan *Client),
+		Unregister: make(chan *Client),
 	}
 }
 
 func (h *Hub) Run() {
 	for {
 		select {
-		case client := <-h.register:
+		case client := <-h.Register:
 			h.mu.Lock()
 			h.clients[client.UserID] = client
 			h.mu.Unlock()
 			log.Printf("WebSocket client registered: %s", client.UserID)
 
-		case client := <-h.unregister:
+		case client := <-h.Unregister:
 			h.mu.Lock()
 			if _, ok := h.clients[client.UserID]; ok {
 				delete(h.clients, client.UserID)
@@ -80,7 +80,7 @@ func (h *Hub) SendToUser(userID uuid.UUID, message []byte) {
 
 func (h *Hub) ReadPump(client *Client) {
 	defer func() {
-		h.unregister <- client
+		h.Unregister <- client
 		client.Conn.Close()
 	}()
 
