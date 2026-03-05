@@ -40,7 +40,7 @@ services:
       - postgres
       - minio
     env_file:
-      - .env
+      - .env.docker
     networks:
       - kazi-network
 
