@@ -9,12 +9,13 @@ import (
 )
 
 type Config struct {
-	DatabaseURL string
-	JWTSecret   string
-	SMSAPIKey   string
-	SMSSenderID string
-	Port        string
-	Environment string
+	DatabaseURL  string
+	JWTSecret    string
+	SMSAPIToken  string
+	SMSSenderID  string
+	SMSBaseURL   string
+	Port         string
+	Environment  string
 }
 
 func LoadConfig() *Config {
@@ -23,12 +24,13 @@ func LoadConfig() *Config {
 	}
 
 	cfg := &Config{
-		DatabaseURL: getEnv("DATABASE_URL", ""),
-		JWTSecret:   getEnv("JWT_SECRET", ""),
-		SMSAPIKey:   getEnv("SMS_API_KEY", ""),
-		SMSSenderID: getEnv("SMS_SENDER_ID", "KAZI"),
-		Port:        getEnv("PORT", "8080"),
-		Environment: getEnv("ENV", "development"),
+		DatabaseURL:  getEnv("DATABASE_URL", ""),
+		JWTSecret:    getEnv("JWT_SECRET", ""),
+		SMSAPIToken:  getEnv("SMS_API_TOKEN", ""),
+		SMSSenderID:  getEnv("SMS_SENDER_ID", "32"),
+		SMSBaseURL:   getEnv("SMS_BASE_URL", "https://api.notify.africa/api/v1/api/messages/send"),
+		Port:         getEnv("PORT", "8080"),
+		Environment:  getEnv("ENV", "development"),
 	}
 
 	if err := cfg.Validate(); err != nil {
@@ -44,6 +46,9 @@ func (c *Config) Validate() error {
 	}
 	if c.JWTSecret == "" {
 		return fmt.Errorf("JWT_SECRET is required")
+	}
+	if c.SMSAPIToken == "" {
+		return fmt.Errorf("SMS_API_TOKEN is required")
 	}
 	return nil
 }
