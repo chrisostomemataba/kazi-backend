@@ -9,13 +9,18 @@ import (
 )
 
 type Config struct {
-	DatabaseURL  string
-	JWTSecret    string
-	SMSAPIToken  string
-	SMSSenderID  string
-	SMSBaseURL   string
-	Port         string
-	Environment  string
+	DatabaseURL       string
+	JWTSecret         string
+	SMSAPIToken       string
+	SMSSenderID       string
+	SMSBaseURL        string
+	MinIOEndpoint     string
+	MinIOAccessKey    string
+	MinIOSecretKey    string
+	MinIOBucket       string
+	MinIOUseSSL       bool
+	Port              string
+	Environment       string
 }
 
 func LoadConfig() *Config {
@@ -24,13 +29,18 @@ func LoadConfig() *Config {
 	}
 
 	cfg := &Config{
-		DatabaseURL:  getEnv("DATABASE_URL", ""),
-		JWTSecret:    getEnv("JWT_SECRET", ""),
-		SMSAPIToken:  getEnv("SMS_API_TOKEN", ""),
-		SMSSenderID:  getEnv("SMS_SENDER_ID", "32"),
-		SMSBaseURL:   getEnv("SMS_BASE_URL", "https://api.notify.africa/api/v1/api/messages/send"),
-		Port:         getEnv("PORT", "8080"),
-		Environment:  getEnv("ENV", "development"),
+		DatabaseURL:    getEnv("DATABASE_URL", ""),
+		JWTSecret:      getEnv("JWT_SECRET", ""),
+		SMSAPIToken:    getEnv("SMS_API_TOKEN", ""),
+		SMSSenderID:    getEnv("SMS_SENDER_ID", "32"),
+		SMSBaseURL:     getEnv("SMS_BASE_URL", "https://api.notify.africa/api/v1/api/messages/send"),
+		MinIOEndpoint:  getEnv("MINIO_INTERNAL_ENDPOINT", "localhost:9000"),
+		MinIOAccessKey: getEnv("MINIO_ACCESS_KEY", ""),
+		MinIOSecretKey: getEnv("MINIO_SECRET_KEY", ""),
+		MinIOBucket:    getEnv("MINIO_BUCKET", "taskmaid-tz"),
+		MinIOUseSSL:    getEnv("MINIO_SECURE", "false") == "true",
+		Port:           getEnv("PORT", "8080"),
+		Environment:    getEnv("ENV", "development"),
 	}
 
 	if err := cfg.Validate(); err != nil {
@@ -47,8 +57,11 @@ func (c *Config) Validate() error {
 	if c.JWTSecret == "" {
 		return fmt.Errorf("JWT_SECRET is required")
 	}
-	if c.SMSAPIToken == "" {
-		return fmt.Errorf("SMS_API_TOKEN is required")
+	if c.MinIOAccessKey == "" {
+		return fmt.Errorf("MINIO_ACCESS_KEY is required")
+	}
+	if c.MinIOSecretKey == "" {
+		return fmt.Errorf("MINIO_SECRET_KEY is required")
 	}
 	return nil
 }
