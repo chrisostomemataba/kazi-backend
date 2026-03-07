@@ -88,3 +88,21 @@ func (h *Handler) CompleteProfile(c *fiber.Ctx) error {
 
 	return util.SuccessResponse(c, authResp, "Profile completed successfully")
 }
+
+func (h *Handler) Login(c *fiber.Ctx) error {
+	var req LoginRequest
+	if err := c.BodyParser(&req); err != nil {
+		return util.ValidationErrorResponse(c, "Invalid request body")
+	}
+
+	if err := util.ValidateStruct(&req); err != nil {
+		return util.ValidationErrorResponse(c, err.Error())
+	}
+
+	authResp, err := h.service.LoginWithOTP(req.PhoneNumber, req.OTPCode)
+	if err != nil {
+		return util.ErrorResponse(c, fiber.StatusBadRequest, err.Error())
+	}
+
+	return util.SuccessResponse(c, authResp, "Login successful")
+}
