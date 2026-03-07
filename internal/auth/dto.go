@@ -19,6 +19,12 @@ type AuthResponse struct {
 	User  *UserData `json:"user"`
 }
 
+type LoginRequest struct {
+	PhoneNumber string `json:"phone_number" validate:"required,len=12"`
+	OTPCode     string `json:"otp_code" validate:"required,len=6"`
+}
+
+
 type UserData struct {
 	ID              string   `json:"id"`
 	PhoneNumber     string   `json:"phone_number"`

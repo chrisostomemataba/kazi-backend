@@ -105,6 +105,7 @@ func main() {
 	authRoutes.Post("/request-otp", authHandler.RequestOTP)
 	authRoutes.Post("/verify-otp", authHandler.VerifyOTP)
 	authRoutes.Post("/complete-profile", authHandler.CompleteProfile)
+	authRoutes.Post("/login", authHandler.Login)
 
 	// Maid routes (protected)
 	maidRoutes := api.Group("/maid", middleware.RequireAuth(cfg.JWTSecret))

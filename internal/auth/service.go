@@ -191,6 +191,64 @@ func (s *Service) Login(phoneNumber string) (*AuthResponse, error) {
 	}, nil
 }
 
+func (s *Service) LoginWithOTP(phoneNumber, otpCode string) (*AuthResponse, error) {
+	formattedPhone := util.FormatPhoneNumber(phoneNumber)
+
+	// Verify OTP
+	otp, err := s.repo.FindValidOTP(formattedPhone, otpCode)
+	if err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return nil, errors.New("invalid or expired OTP")
+		}
+		return nil, err
+	}
+
+	if otp.Attempts >= 3 {
+		return nil, errors.New("OTP attempt limit exceeded")
+	}
+
+	// Mark OTP as used
+	if err := s.repo.MarkOTPAsUsed(otp.ID); err != nil {
+		return nil, err
+	}
+
+	// Find user
+	user, err := s.repo.FindUserByPhone(formattedPhone)
+	if err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return nil, errors.New("user not found, please complete registration first")
+		}
+		return nil, err
+	}
+
+	// Get user roles
+	roles, err := s.repo.GetUserRoles(user.ID)
+	if err != nil {
+		return nil, err
+	}
+
+	if len(roles) == 0 {
+		return nil, errors.New("user has no roles assigned, please contact support")
+	}
+
+	// Generate JWT token with roles
+	token, err := util.GenerateJWT(user.ID, roles, s.jwtSecret)
+	if err != nil {
+		return nil, fmt.Errorf("failed to generate token: %w", err)
+	}
+
+	return &AuthResponse{
+		Token: token,
+		User: &UserData{
+			ID:              user.ID.String(),
+			PhoneNumber:     user.PhoneNumber,
+			FullName:        user.FullName,
+			ProfilePhotoURL: user.ProfilePhotoURL,
+			Roles:           roles,
+		},
+	}, nil
+}
+
 func generateOTPCode() string {
 	rand.Seed(time.Now().UnixNano())
 	return fmt.Sprintf("%06d", rand.Intn(1000000))
