@@ -24,9 +24,11 @@ type NotifyAfricaRequest struct {
 }
 
 type NotifyAfricaResponse struct {
-	Success bool   `json:"success"`
-	Message string `json:"message"`
-	Data    interface{} `json:"data,omitempty"`
+	Status    int                    `json:"status"`
+	Message   string                 `json:"message"`
+	Timestamp string                 `json:"timestamp"`
+	Path      string                 `json:"path"`
+	Data      map[string]interface{} `json:"data,omitempty"`
 }
 
 func NewSMSService(apiToken, senderID, baseURL string) *SMSService {
@@ -93,7 +95,7 @@ func (s *SMSService) send(phoneNumber, message string) error {
 		return fmt.Errorf("SMS API returned status %d: %s", resp.StatusCode, string(body))
 	}
 
-	// Try to parse response
+	// Parse response
 	var apiResponse NotifyAfricaResponse
 	if err := json.Unmarshal(body, &apiResponse); err != nil {
 		// If can't parse JSON but status is 200/202, consider it success
@@ -101,11 +103,12 @@ func (s *SMSService) send(phoneNumber, message string) error {
 		return nil
 	}
 
-	// Check if API returned success in response body
-	if !apiResponse.Success {
-		return fmt.Errorf("SMS API error: %s", apiResponse.Message)
+
+	if apiResponse.Status == 200 || apiResponse.Status == 202 {
+		log.Printf("[SMS] ✅ Successfully sent to: %s (Message: %s)", phoneNumber, apiResponse.Message)
+		return nil
 	}
 
-	log.Printf("[SMS] Successfully sent to: %s", phoneNumber)
-	return nil
+
+	return fmt.Errorf("SMS API error (status %d): %s", apiResponse.Status, apiResponse.Message)
 }
