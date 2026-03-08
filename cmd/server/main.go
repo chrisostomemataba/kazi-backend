@@ -23,7 +23,6 @@ import (
 func main() {
 	cfg := config.LoadConfig()
 
-	// Database connection
 	db, err := database.Connect(cfg.DatabaseURL, cfg.Environment == "development")
 	if err != nil {
 		log.Fatal("Database connection failed:", err)
@@ -37,6 +36,7 @@ func main() {
 		&maid.MaidProfile{},
 		&maid.MaidService{},
 		&maid.MaidVerificationDocument{},
+		&maid.MaidStatistics{},
 		&notification.Notification{},
 		&admin.AdminUser{},
 		&admin.AuditLog{},
@@ -44,7 +44,6 @@ func main() {
 		log.Fatal("Migration failed:", err)
 	}
 
-	// Initialize services
 	smsService := sms.NewSMSService(cfg.SMSAPIToken, cfg.SMSSenderID, cfg.SMSBaseURL)
 	
 	minioService, err := storage.NewMinIOService(
@@ -58,32 +57,27 @@ func main() {
 		log.Fatal("MinIO initialization failed:", err)
 	}
 
-	// WebSocket Hub
 	hub := wsHub.NewHub()
 	go hub.Run()
 
-	// Repositories
 	authRepo := auth.NewRepository(db)
 	maidRepo := maid.NewRepository(db)
 	adminRepo := admin.NewRepository(db)
 
-	// Services
 	notificationService := notification.NewService(db)
 	authService := auth.NewService(authRepo, smsService, cfg.JWTSecret)
 	maidService := maid.NewService(maidRepo, minioService, notificationService)
 	adminService := admin.NewService(adminRepo, minioService, notificationService, cfg.JWTSecret)
 
-	// Handlers
 	authHandler := auth.NewHandler(authService)
 	maidHandler := maid.NewHandler(maidService)
 	adminHandler := admin.NewHandler(adminService)
 	notificationHandler := notification.NewHandler(notificationService)
 	wsHandler := notification.NewWebSocketHandler(hub, cfg.JWTSecret)
 
-	// Setup Fiber
 	app := fiber.New(fiber.Config{
-		ErrorHandler:  customErrorHandler,
-		BodyLimit:     50 * 1024 * 1024, // 50MB for video uploads
+		ErrorHandler: customErrorHandler,
+		BodyLimit:    50 * 1024 * 1024,
 	})
 
 	app.Use(logger.New())
@@ -92,12 +86,10 @@ func main() {
 		AllowHeaders: "Origin, Content-Type, Accept, Authorization",
 	}))
 
-	// Health check
 	app.Get("/health", func(c *fiber.Ctx) error {
 		return c.JSON(fiber.Map{"status": "ok"})
 	})
 
-	// API routes
 	api := app.Group("/api/v1")
 
 	// Auth routes (public)
@@ -113,17 +105,24 @@ func main() {
 	maidRoutes.Post("/verification/upload-video", middleware.RequireRole("maid"), maidHandler.UploadVerificationVideo)
 	maidRoutes.Post("/verification/upload-id", middleware.RequireRole("maid"), maidHandler.UploadIDPhoto)
 	maidRoutes.Get("/profile", middleware.RequireRole("maid"), maidHandler.GetMyProfile)
+	maidRoutes.Put("/profile/location", middleware.RequireRole("maid"), maidHandler.UpdateLocation)
+	maidRoutes.Put("/profile/contract-rate", middleware.RequireRole("maid"), maidHandler.UpdateContractRate)
+
+	// Maid search routes (public - no auth needed for browsing)
+	maidsRoutes := api.Group("/maids")
+	maidsRoutes.Get("/search", maidHandler.SearchMaids)
+	maidsRoutes.Get("/:maid_id", maidHandler.GetMaidByID)
 
 	// Notification routes (protected)
 	notificationRoutes := api.Group("/notifications", middleware.RequireAuth(cfg.JWTSecret))
 	notificationRoutes.Get("/", notificationHandler.GetMyNotifications)
 	notificationRoutes.Put("/:id/read", notificationHandler.MarkAsRead)
 
-	// WebSocket route (protected via query token)
+	// WebSocket route
 	app.Use("/ws", wsHandler.UpgradeMiddleware)
 	app.Get("/ws", websocket.New(wsHandler.HandleConnection))
 
-	// Admin routes (protected - admin only)
+	// Admin routes
 	adminRoutes := api.Group("/admin")
 	adminRoutes.Post("/login", adminHandler.Login)
 	
