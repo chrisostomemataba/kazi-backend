@@ -72,3 +72,23 @@ func (s *Service) MarkAsRead(ctx context.Context, notificationID uuid.UUID) erro
 		Where("id = ?", notificationID).
 		Update("is_read", true).Error
 }
+
+func (s *Service) NotifyMaidNewBooking(ctx context.Context, maidID uuid.UUID, bookingRef string) error {
+	notification := &Notification{
+		UserID:           maidID,
+		Title:            "Ombi Jipya la Kazi!",
+		Message:          fmt.Sprintf("Umepata ombi jipya la kazi. Namba: %s", bookingRef),
+		NotificationType: "new_booking_request",
+	}
+	return s.CreateNotification(ctx, notification)
+}
+
+func (s *Service) NotifyMaidBookingConfirmed(ctx context.Context, maidID uuid.UUID, bookingRef string) error {
+	notification := &Notification{
+		UserID:           maidID,
+		Title:            "Booking Imethibitishwa!",
+		Message:          fmt.Sprintf("Mteja amelipa. Booking %s imethibitishwa.", bookingRef),
+		NotificationType: "booking_confirmed",
+	}
+	return s.CreateNotification(ctx, notification)
+}

@@ -1,6 +1,7 @@
 package auth
 
 import (
+	"context"
 	"time"
 
 	"github.com/google/uuid"
@@ -15,6 +16,7 @@ func NewRepository(db *gorm.DB) *Repository {
 	return &Repository{db: db}
 }
 
+
 func (r *Repository) FindUserByPhone(phoneNumber string) (*User, error) {
 	var user User
 	err := r.db.Where("phone_number = ?", phoneNumber).First(&user).Error
@@ -22,6 +24,12 @@ func (r *Repository) FindUserByPhone(phoneNumber string) (*User, error) {
 		return nil, err
 	}
 	return &user, nil
+}
+
+func (r *Repository) FindUserByID(ctx context.Context, userID uuid.UUID) (*User, error) {
+	var user User
+	err := r.db.WithContext(ctx).Where("id = ?", userID).First(&user).Error
+	return &user, err
 }
 
 func (r *Repository) CreateUser(user *User) error {
