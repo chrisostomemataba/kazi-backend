@@ -6,6 +6,8 @@ import (
 	"kazi-backend/config"
 	"kazi-backend/internal/admin"
 	"kazi-backend/internal/auth"
+	"kazi-backend/internal/booking"
+	"kazi-backend/internal/customer"
 	"kazi-backend/internal/common/database"
 	"kazi-backend/internal/common/middleware"
 	"kazi-backend/internal/common/sms"
@@ -30,14 +32,28 @@ func main() {
 
 	// Auto-migrate all models
 	if err := database.AutoMigrate(db,
+		// Auth
 		&auth.User{},
 		&auth.UserRole{},
 		&auth.OTPCode{},
+		// Maid
 		&maid.MaidProfile{},
 		&maid.MaidService{},
 		&maid.MaidVerificationDocument{},
 		&maid.MaidStatistics{},
+		// Customer
+		&customer.CustomerProfile{},
+		&customer.CustomerLocation{},
+		&customer.CustomerStatistics{},
+		// Booking
+		&booking.Booking{},
+		&booking.BookingLocation{},
+		&booking.BookingPricing{},
+		&booking.BookingTimeline{},
+		&booking.Payment{},
+		// Notifications
 		&notification.Notification{},
+		// Admin
 		&admin.AdminUser{},
 		&admin.AuditLog{},
 	); err != nil {
@@ -60,17 +76,26 @@ func main() {
 	hub := wsHub.NewHub()
 	go hub.Run()
 
+	// Repositories
 	authRepo := auth.NewRepository(db)
 	maidRepo := maid.NewRepository(db)
+	customerRepo := customer.NewRepository(db)
+	bookingRepo := booking.NewRepository(db)
 	adminRepo := admin.NewRepository(db)
 
+	// Services
 	notificationService := notification.NewService(db)
 	authService := auth.NewService(authRepo, smsService, cfg.JWTSecret)
 	maidService := maid.NewService(maidRepo, minioService, notificationService)
+	customerService := customer.NewService(customerRepo, authRepo)
+	bookingService := booking.NewService(bookingRepo, authRepo, maidRepo, customerRepo, notificationService)
 	adminService := admin.NewService(adminRepo, minioService, notificationService, cfg.JWTSecret)
 
+	// Handlers
 	authHandler := auth.NewHandler(authService)
 	maidHandler := maid.NewHandler(maidService)
+	customerHandler := customer.NewHandler(customerService)
+	bookingHandler := booking.NewHandler(bookingService)
 	adminHandler := admin.NewHandler(adminService)
 	notificationHandler := notification.NewHandler(notificationService)
 	wsHandler := notification.NewWebSocketHandler(hub, cfg.JWTSecret)
@@ -99,6 +124,13 @@ func main() {
 	authRoutes.Post("/complete-profile", authHandler.CompleteProfile)
 	authRoutes.Post("/login", authHandler.Login)
 
+	// Customer routes (protected)
+	customerRoutes := api.Group("/customer", middleware.RequireAuth(cfg.JWTSecret))
+	customerRoutes.Get("/profile", middleware.RequireRole("customer"), customerHandler.GetProfile)
+	customerRoutes.Get("/locations", middleware.RequireRole("customer"), customerHandler.GetLocations)
+	customerRoutes.Post("/locations", middleware.RequireRole("customer"), customerHandler.AddLocation)
+	customerRoutes.Delete("/locations/:location_id", middleware.RequireRole("customer"), customerHandler.DeleteLocation)
+
 	// Maid routes (protected)
 	maidRoutes := api.Group("/maid", middleware.RequireAuth(cfg.JWTSecret))
 	maidRoutes.Post("/verification/submit", middleware.RequireRole("maid"), maidHandler.SubmitVerification)
@@ -108,10 +140,18 @@ func main() {
 	maidRoutes.Put("/profile/location", middleware.RequireRole("maid"), maidHandler.UpdateLocation)
 	maidRoutes.Put("/profile/contract-rate", middleware.RequireRole("maid"), maidHandler.UpdateContractRate)
 
-	// Maid search routes (public - no auth needed for browsing)
+	// Maid search routes (public - no auth needed)
 	maidsRoutes := api.Group("/maids")
 	maidsRoutes.Get("/search", maidHandler.SearchMaids)
 	maidsRoutes.Get("/:maid_id", maidHandler.GetMaidByID)
+
+	// Booking routes (protected)
+	bookingRoutes := api.Group("/bookings", middleware.RequireAuth(cfg.JWTSecret))
+	bookingRoutes.Post("/validate", middleware.RequireRole("customer"), bookingHandler.ValidateBooking)
+	bookingRoutes.Post("/create", middleware.RequireRole("customer"), bookingHandler.CreateBooking)
+	bookingRoutes.Get("/my-bookings", middleware.RequireRole("customer"), bookingHandler.GetMyBookings)
+	bookingRoutes.Get("/:id", bookingHandler.GetBookingByID)
+	bookingRoutes.Post("/:id/initiate-payment", middleware.RequireRole("customer"), bookingHandler.InitiatePayment)
 
 	// Notification routes (protected)
 	notificationRoutes := api.Group("/notifications", middleware.RequireAuth(cfg.JWTSecret))
