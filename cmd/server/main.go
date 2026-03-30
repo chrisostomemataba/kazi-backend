@@ -86,7 +86,7 @@ func main() {
 	// Services
 	notificationService := notification.NewService(db)
 	authService := auth.NewService(authRepo, smsService, cfg.JWTSecret)
-	maidService := maid.NewService(maidRepo, minioService, notificationService)
+	maidService := maid.NewService(maidRepo, authRepo, minioService, notificationService)
 	customerService := customer.NewService(customerRepo, authRepo)
 	bookingService := booking.NewService(bookingRepo, authRepo, maidRepo, customerRepo, notificationService)
 	adminService := admin.NewService(adminRepo, minioService, notificationService, cfg.JWTSecret)

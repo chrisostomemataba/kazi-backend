@@ -9,20 +9,22 @@ import (
 
 	"kazi-backend/internal/common/storage"
 	"kazi-backend/internal/notification"
-
+	"kazi-backend/internal/auth"
 	"github.com/google/uuid"
 	"gorm.io/gorm"
 )
 
 type Service struct {
 	repo            *Repository
+	authRepo        *auth.Repository
 	minioService    *storage.MinIOService
 	notificationSvc *notification.Service
 }
 
-func NewService(repo *Repository, minioService *storage.MinIOService, notificationSvc *notification.Service) *Service {
+func NewService(repo *Repository, authRepo *auth.Repository, minioService *storage.MinIOService, notificationSvc *notification.Service) *Service {
 	return &Service{
 		repo:            repo,
+		authRepo:        authRepo,
 		minioService:    minioService,
 		notificationSvc: notificationSvc,
 	}
@@ -182,6 +184,11 @@ func (s *Service) GetMaidProfile(ctx context.Context, userID uuid.UUID) (*MaidPr
 		return nil, err
 	}
 
+	user, err := s.authRepo.FindUserByID(ctx, userID)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get user: %w", err)
+	}
+
 	services, err := s.repo.GetMaidServices(ctx, userID)
 	if err != nil {
 		return nil, err
@@ -199,9 +206,10 @@ func (s *Service) GetMaidProfile(ctx context.Context, userID uuid.UUID) (*MaidPr
 
 	var videoURL, idPhotoURL string
 	for _, doc := range docs {
-		if doc.DocumentType == "selfie_video" {
+		switch doc.DocumentType {
+		case "selfie_video":
 			videoURL, _ = s.minioService.GetPresignedURL(ctx, doc.FileURL, 3600)
-		} else if doc.DocumentType == "id_photo" {
+		case "id_photo":
 			idPhotoURL, _ = s.minioService.GetPresignedURL(ctx, doc.FileURL, 3600)
 		}
 	}
@@ -214,6 +222,9 @@ func (s *Service) GetMaidProfile(ctx context.Context, userID uuid.UUID) (*MaidPr
 	return &MaidProfileResponse{
 		ID:                  profile.ID.String(),
 		UserID:              profile.UserID.String(),
+		FullName:            user.FullName,
+		ProfilePhotoURL:     user.ProfilePhotoURL,
+		IsAvailableNow:      profile.IsAvailableNow,
 		Bio:                 profile.Bio,
 		Gender:              profile.Gender,
 		DateOfBirth:         dobStr,

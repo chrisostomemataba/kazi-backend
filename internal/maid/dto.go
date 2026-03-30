@@ -39,6 +39,9 @@ type UpdateContractRateRequest struct {
 type MaidProfileResponse struct {
 	ID                  string              `json:"id"`
 	UserID              string              `json:"user_id"`
+	FullName            string              `json:"full_name"`
+	ProfilePhotoURL     string              `json:"profile_photo_url,omitempty"`
+	IsAvailableNow      bool                `json:"is_available_now"`
 	Bio                 string              `json:"bio"`
 	Gender              string              `json:"gender"`
 	DateOfBirth         string              `json:"date_of_birth,omitempty"`
