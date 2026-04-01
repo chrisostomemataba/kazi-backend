@@ -15,7 +15,7 @@ import (
 	wsHub "kazi-backend/internal/common/websocket"
 	"kazi-backend/internal/maid"
 	"kazi-backend/internal/notification"
-
+	"kazi-backend/internal/review"
 	"github.com/gofiber/fiber/v2"
 	"github.com/gofiber/fiber/v2/middleware/cors"
 	"github.com/gofiber/fiber/v2/middleware/logger"
@@ -51,6 +51,8 @@ func main() {
 		&booking.BookingPricing{},
 		&booking.BookingTimeline{},
 		&booking.Payment{},
+		// Review
+		&review.Review{},
 		// Notifications
 		&notification.Notification{},
 		// Admin
@@ -81,6 +83,7 @@ func main() {
 	maidRepo := maid.NewRepository(db)
 	customerRepo := customer.NewRepository(db)
 	bookingRepo := booking.NewRepository(db)
+	reviewRepo    := review.NewRepository(db)
 	adminRepo := admin.NewRepository(db)
 
 	// Services
@@ -89,6 +92,7 @@ func main() {
 	maidService := maid.NewService(maidRepo, authRepo, minioService, notificationService)
 	customerService := customer.NewService(customerRepo, authRepo)
 	bookingService := booking.NewService(bookingRepo, authRepo, maidRepo, customerRepo, notificationService)
+	reviewService := review.NewService(reviewRepo, authRepo, bookingRepo)
 	adminService := admin.NewService(adminRepo, minioService, notificationService, cfg.JWTSecret)
 
 	// Handlers
@@ -96,6 +100,7 @@ func main() {
 	maidHandler := maid.NewHandler(maidService)
 	customerHandler := customer.NewHandler(customerService)
 	bookingHandler := booking.NewHandler(bookingService)
+	reviewHandler := review.NewHandler(reviewService)
 	adminHandler := admin.NewHandler(adminService)
 	notificationHandler := notification.NewHandler(notificationService)
 	wsHandler := notification.NewWebSocketHandler(hub, cfg.JWTSecret)
@@ -152,6 +157,11 @@ func main() {
 	bookingRoutes.Get("/my-bookings", middleware.RequireRole("customer"), bookingHandler.GetMyBookings)
 	bookingRoutes.Get("/:id", bookingHandler.GetBookingByID)
 	bookingRoutes.Post("/:id/initiate-payment", middleware.RequireRole("customer"), bookingHandler.InitiatePayment)
+
+	// Review routes (protected)
+	reviewRoutes := api.Group("/reviews", middleware.RequireAuth(cfg.JWTSecret))
+	reviewRoutes.Post("/", middleware.RequireRole("customer"), reviewHandler.CreateReview)
+	reviewRoutes.Get("/maid/:maid_id", reviewHandler.GetMaidReviews)	
 
 	// Notification routes (protected)
 	notificationRoutes := api.Group("/notifications", middleware.RequireAuth(cfg.JWTSecret))
