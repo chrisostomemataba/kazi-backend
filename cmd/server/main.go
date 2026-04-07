@@ -151,13 +151,21 @@ func main() {
 	maidsRoutes.Get("/search", maidHandler.SearchMaids)
 	maidsRoutes.Get("/:maid_id", maidHandler.GetMaidByID)
 
-	// Booking routes (protected)
+	// Customer booking routes
 	bookingRoutes := api.Group("/bookings", middleware.RequireAuth(cfg.JWTSecret))
 	bookingRoutes.Post("/validate", middleware.RequireRole("customer"), bookingHandler.ValidateBooking)
 	bookingRoutes.Post("/create", middleware.RequireRole("customer"), bookingHandler.CreateBooking)
 	bookingRoutes.Get("/my-bookings", middleware.RequireRole("customer"), bookingHandler.GetMyBookings)
-	bookingRoutes.Get("/:id", bookingHandler.GetBookingByID)
 	bookingRoutes.Post("/:id/initiate-payment", middleware.RequireRole("customer"), bookingHandler.InitiatePayment)
+	bookingRoutes.Post("/:id/confirm", middleware.RequireRole("customer"), bookingHandler.ConfirmCompletion) 
+
+	// Maid booking routes
+	maidBookingRoutes := api.Group("/maid/bookings", middleware.RequireAuth(cfg.JWTSecret))
+	maidBookingRoutes.Get("/requests", middleware.RequireRole("maid"), bookingHandler.GetMaidBookings)         // list with ?status=pending_maid
+	maidBookingRoutes.Post("/:id/accept", middleware.RequireRole("maid"), bookingHandler.AcceptBooking)        // Workflow C3
+	maidBookingRoutes.Post("/:id/decline", middleware.RequireRole("maid"), bookingHandler.DeclineBooking)      // Workflow C3
+	maidBookingRoutes.Post("/:id/arrive", middleware.RequireRole("maid"), bookingHandler.MarkArrival)          // Workflow E1
+	maidBookingRoutes.Post("/:id/complete", middleware.RequireRole("maid"), bookingHandler.MarkComplete)       // Workflow E2
 
 	// Review routes (protected)
 	reviewRoutes := api.Group("/reviews", middleware.RequireAuth(cfg.JWTSecret))

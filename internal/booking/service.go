@@ -18,8 +18,8 @@ import (
 )
 
 const (
-	PlatformCommissionRate = 15.0 // 15%
-	GPSVerificationRadius  = 500  // 500 meters
+	PlatformCommissionRate = 15.0
+	GPSVerificationRadius  = 500
 )
 
 type Service struct {
@@ -46,9 +46,9 @@ func NewService(
 	}
 }
 
-func (s *Service) ValidateBooking(ctx context.Context, customerID uuid.UUID, req *ValidateBookingRequest) (*ValidateBookingResponse, error) {
-	log.Printf("[Booking] Validating booking for customer %s with maid %s", customerID, req.MaidID)
+// ── Workflow C2: Create booking ───────────────────────────────────────────────
 
+func (s *Service) ValidateBooking(ctx context.Context, customerID uuid.UUID, req *ValidateBookingRequest) (*ValidateBookingResponse, error) {
 	response := &ValidateBookingResponse{
 		CanBook:       false,
 		MaidAvailable: false,
@@ -62,14 +62,13 @@ func (s *Service) ValidateBooking(ctx context.Context, customerID uuid.UUID, req
 		return response, nil
 	}
 
-	// Check maid exists and is verified
 	maidProfile, err := s.maidRepo.GetMaidProfileByUserID(ctx, maidUUID)
 	if err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
 			response.Issues = append(response.Issues, "Maid not found")
 			return response, nil
 		}
-		return nil, fmt.Errorf("failed to get maid profile: %w", err)
+		return nil, fmt.Errorf("get maid profile: %w", err)
 	}
 
 	if maidProfile.VerificationStatus != "approved" {
@@ -77,64 +76,46 @@ func (s *Service) ValidateBooking(ctx context.Context, customerID uuid.UUID, req
 		return response, nil
 	}
 
-	// Parse booking date
 	bookingDate, err := time.Parse("2006-01-02", req.BookingDate)
 	if err != nil {
 		response.Issues = append(response.Issues, "Invalid date format, use YYYY-MM-DD")
 		return response, nil
 	}
 
-	// Check if date is in the past
 	today := time.Now().Truncate(24 * time.Hour)
 	if bookingDate.Before(today) {
 		response.Issues = append(response.Issues, "Cannot book for past dates")
 		return response, nil
 	}
 
-	// Check maid availability (no conflicting bookings)
 	available, err := s.repo.CheckMaidAvailability(ctx, maidUUID, bookingDate, req.StartTime, req.EndTime)
 	if err != nil {
-		return nil, fmt.Errorf("failed to check availability: %w", err)
+		return nil, fmt.Errorf("check availability: %w", err)
 	}
 
 	response.MaidAvailable = available
 	if !available {
-		response.Issues = append(response.Issues, "Maid is not available at this time")
+		response.Issues = append(response.Issues, "Msaidizi ana booking nyingine wakati huu")
 	}
 
-	// Customer validation - ensure they have verified phone
 	user, err := s.authRepo.FindUserByID(ctx, customerID)
 	if err != nil {
 		response.Issues = append(response.Issues, "Customer not found")
 		return response, nil
 	}
 
-	if !user.IsPhoneVerified {
-		response.Issues = append(response.Issues, "Please verify your phone number")
-		return response, nil
-	}
-
 	response.CustomerReady = user.IsPhoneVerified
 	response.CanBook = response.MaidAvailable && response.CustomerReady
-
-	if response.CanBook {
-		log.Printf("[Booking] Validation passed for customer %s", customerID)
-	} else {
-		log.Printf("[Booking] Validation failed: %v", response.Issues)
-	}
 
 	return response, nil
 }
 
 func (s *Service) CreateBooking(ctx context.Context, customerID uuid.UUID, req *CreateBookingRequest) (*BookingResponse, error) {
-	log.Printf("[Booking] Creating booking for customer %s with maid %s", customerID, req.MaidID)
-
 	maidUUID, err := uuid.Parse(req.MaidID)
 	if err != nil {
 		return nil, errors.New("invalid maid ID")
 	}
 
-	// Validate booking first
 	validateReq := &ValidateBookingRequest{
 		MaidID:      req.MaidID,
 		BookingDate: req.BookingDate,
@@ -153,32 +134,26 @@ func (s *Service) CreateBooking(ctx context.Context, customerID uuid.UUID, req *
 		return nil, errors.New("unable to create booking")
 	}
 
-	// Get maid profile for pricing
 	maidProfile, err := s.maidRepo.GetMaidProfileByUserID(ctx, maidUUID)
 	if err != nil {
-		return nil, fmt.Errorf("failed to get maid profile: %w", err)
+		return nil, fmt.Errorf("get maid profile: %w", err)
 	}
 
-	// Calculate duration
 	duration, err := calculateDuration(req.StartTime, req.EndTime)
 	if err != nil {
-		return nil, fmt.Errorf("failed to calculate duration: %w", err)
+		return nil, fmt.Errorf("calculate duration: %w", err)
 	}
-
 	if duration <= 0 {
 		return nil, errors.New("end time must be after start time")
 	}
 
-	// Calculate pricing
 	subtotal := int(math.Round(float64(maidProfile.HourlyRate) * duration))
 	platformFee := int(math.Round(float64(subtotal) * PlatformCommissionRate / 100))
 	total := subtotal + platformFee
-	maidPayout := subtotal
+	maidPayout := subtotal - platformFee
 
-	// Parse booking date
 	bookingDate, _ := time.Parse("2006-01-02", req.BookingDate)
 
-	// Create booking
 	booking := &Booking{
 		CustomerID:          customerID,
 		MaidID:              maidUUID,
@@ -193,13 +168,9 @@ func (s *Service) CreateBooking(ctx context.Context, customerID uuid.UUID, req *
 	}
 
 	if err := s.repo.CreateBooking(ctx, booking); err != nil {
-		log.Printf("[Booking] Failed to create booking: %v", err)
-		return nil, fmt.Errorf("failed to create booking: %w", err)
+		return nil, fmt.Errorf("create booking: %w", err)
 	}
 
-	log.Printf("[Booking] Created booking %s with reference %s", booking.ID, booking.ReferenceNumber)
-
-	// Create booking location
 	location := &BookingLocation{
 		BookingID:           booking.ID,
 		CustomerAddress:     req.ServiceLocation.Address,
@@ -208,13 +179,10 @@ func (s *Service) CreateBooking(ctx context.Context, customerID uuid.UUID, req *
 		District:            req.ServiceLocation.District,
 		Ward:                req.ServiceLocation.Ward,
 	}
-
 	if err := s.repo.CreateBookingLocation(ctx, location); err != nil {
-		log.Printf("[Booking] Failed to create location: %v", err)
-		return nil, fmt.Errorf("failed to create booking location: %w", err)
+		return nil, fmt.Errorf("create location: %w", err)
 	}
 
-	// Create booking pricing
 	pricing := &BookingPricing{
 		BookingID:                booking.ID,
 		HourlyRate:               maidProfile.HourlyRate,
@@ -224,36 +192,37 @@ func (s *Service) CreateBooking(ctx context.Context, customerID uuid.UUID, req *
 		TotalAmount:              total,
 		MaidPayoutAmount:         maidPayout,
 	}
-
 	if err := s.repo.CreateBookingPricing(ctx, pricing); err != nil {
-		log.Printf("[Booking] Failed to create pricing: %v", err)
-		return nil, fmt.Errorf("failed to create booking pricing: %w", err)
+		return nil, fmt.Errorf("create pricing: %w", err)
 	}
 
-	// Add timeline event
-	timelineEvent := &BookingTimeline{
+	s.repo.AddTimelineEvent(ctx, &BookingTimeline{
 		BookingID:      booking.ID,
 		EventType:      "booking_created",
 		EventTimestamp: time.Now(),
 		TriggeredBy:    &customerID,
 		Notes:          "Customer created booking",
+	})
+
+	// Get customer name for notification
+	customerUser, _ := s.authRepo.FindUserByID(ctx, customerID)
+	customerName := "Mteja"
+	if customerUser != nil {
+		customerName = customerUser.FullName
 	}
 
-	if err := s.repo.AddTimelineEvent(ctx, timelineEvent); err != nil {
-		log.Printf("[Booking] Warning: Failed to add timeline event: %v", err)
+	if err := s.notificationSvc.NotifyMaidNewBooking(ctx, maidUUID, booking.ReferenceNumber, customerName); err != nil {
+		log.Printf("[Booking] Warning: notification failed: %v", err)
 	}
 
-	// Send notification to maid
-	if err := s.notificationSvc.NotifyMaidNewBooking(ctx, maidUUID, booking.ReferenceNumber); err != nil {
-		log.Printf("[Booking] Warning: Failed to send notification to maid: %v", err)
-	}
-
-	log.Printf("[Booking] Booking %s created successfully", booking.ReferenceNumber)
+	log.Printf("[Booking] Created %s for customer %s → maid %s", booking.ReferenceNumber, customerID, maidUUID)
 
 	return s.buildBookingResponse(ctx, booking, location, pricing, nil)
 }
 
-func (s *Service) GetBookingByID(ctx context.Context, userID uuid.UUID, bookingID string) (*BookingResponse, error) {
+// ── Workflow C3: Maid accepts booking ─────────────────────────────────────────
+
+func (s *Service) AcceptBooking(ctx context.Context, maidID uuid.UUID, bookingID string) (*BookingResponse, error) {
 	bookingUUID, err := uuid.Parse(bookingID)
 	if err != nil {
 		return nil, errors.New("invalid booking ID")
@@ -261,63 +230,95 @@ func (s *Service) GetBookingByID(ctx context.Context, userID uuid.UUID, bookingI
 
 	booking, err := s.repo.GetBookingByID(ctx, bookingUUID)
 	if err != nil {
-		if errors.Is(err, gorm.ErrRecordNotFound) {
-			return nil, errors.New("booking not found")
-		}
-		return nil, fmt.Errorf("failed to get booking: %w", err)
+		return nil, errors.New("booking not found")
 	}
 
-	// Verify user is part of this booking
-	if booking.CustomerID != userID && booking.MaidID != userID {
-		return nil, errors.New("unauthorized to view this booking")
+	if booking.MaidID != maidID {
+		return nil, errors.New("unauthorized")
 	}
 
-	location, err := s.repo.GetBookingLocation(ctx, bookingUUID)
-	if err != nil {
-		log.Printf("[Booking] Warning: Failed to get location: %v", err)
-		location = nil
+	if booking.BookingStatus != "pending_maid" {
+		return nil, fmt.Errorf("cannot accept booking in status: %s", booking.BookingStatus)
 	}
 
-	pricing, err := s.repo.GetBookingPricing(ctx, bookingUUID)
-	if err != nil {
-		log.Printf("[Booking] Warning: Failed to get pricing: %v", err)
-		pricing = nil
+	if err := s.repo.UpdateBookingStatus(ctx, bookingUUID, "maid_accepted"); err != nil {
+		return nil, fmt.Errorf("update status: %w", err)
 	}
 
-	timeline, err := s.repo.GetBookingTimeline(ctx, bookingUUID)
-	if err != nil {
-		log.Printf("[Booking] Warning: Failed to get timeline: %v", err)
-		timeline = nil
+	s.repo.AddTimelineEvent(ctx, &BookingTimeline{
+		BookingID:      bookingUUID,
+		EventType:      "maid_accepted",
+		EventTimestamp: time.Now(),
+		TriggeredBy:    &maidID,
+		Notes:          "Maid accepted the booking",
+	})
+
+	// Notify customer to proceed with payment
+	maidUser, _ := s.authRepo.FindUserByID(ctx, maidID)
+	maidName := "Msaidizi"
+	if maidUser != nil {
+		maidName = maidUser.FullName
 	}
 
-	return s.buildBookingResponse(ctx, booking, location, pricing, timeline)
+	s.notificationSvc.NotifyCustomerMaidAccepted(ctx, booking.CustomerID, maidName, booking.ReferenceNumber)
+
+	log.Printf("[Booking] %s accepted by maid %s", booking.ReferenceNumber, maidID)
+
+	booking.BookingStatus = "maid_accepted"
+	location, _ := s.repo.GetBookingLocation(ctx, bookingUUID)
+	pricing, _ := s.repo.GetBookingPricing(ctx, bookingUUID)
+	return s.buildBookingResponse(ctx, booking, location, pricing, nil)
 }
 
-func (s *Service) GetCustomerBookings(ctx context.Context, customerID uuid.UUID, status string, page, limit int) ([]BookingResponse, error) {
-	bookings, err := s.repo.GetCustomerBookings(ctx, customerID, status, page, limit)
+// ── Workflow C3: Maid declines booking ────────────────────────────────────────
+
+func (s *Service) DeclineBooking(ctx context.Context, maidID uuid.UUID, bookingID string, reason string) error {
+	bookingUUID, err := uuid.Parse(bookingID)
 	if err != nil {
-		return nil, fmt.Errorf("failed to get bookings: %w", err)
+		return errors.New("invalid booking ID")
 	}
 
-	var responses []BookingResponse
-	for _, booking := range bookings {
-		location, _ := s.repo.GetBookingLocation(ctx, booking.ID)
-		pricing, _ := s.repo.GetBookingPricing(ctx, booking.ID)
-
-		resp, err := s.buildBookingResponse(ctx, &booking, location, pricing, nil)
-		if err != nil {
-			log.Printf("[Booking] Warning: Failed to build response for booking %s: %v", booking.ID, err)
-			continue
-		}
-		responses = append(responses, *resp)
+	booking, err := s.repo.GetBookingByID(ctx, bookingUUID)
+	if err != nil {
+		return errors.New("booking not found")
 	}
 
-	return responses, nil
+	if booking.MaidID != maidID {
+		return errors.New("unauthorized")
+	}
+
+	if booking.BookingStatus != "pending_maid" {
+		return fmt.Errorf("cannot decline booking in status: %s", booking.BookingStatus)
+	}
+
+	if err := s.repo.UpdateBookingStatus(ctx, bookingUUID, "cancelled_by_maid"); err != nil {
+		return fmt.Errorf("update status: %w", err)
+	}
+
+	s.repo.AddTimelineEvent(ctx, &BookingTimeline{
+		BookingID:      bookingUUID,
+		EventType:      "maid_declined",
+		EventTimestamp: time.Now(),
+		TriggeredBy:    &maidID,
+		Notes:          fmt.Sprintf("Maid declined: %s", reason),
+	})
+
+	maidUser, _ := s.authRepo.FindUserByID(ctx, maidID)
+	maidName := "Msaidizi"
+	if maidUser != nil {
+		maidName = maidUser.FullName
+	}
+
+	s.notificationSvc.NotifyCustomerMaidDeclined(ctx, booking.CustomerID, maidName, booking.ReferenceNumber)
+
+	log.Printf("[Booking] %s declined by maid %s", booking.ReferenceNumber, maidID)
+
+	return nil
 }
+
+// ── Workflow D: Payment (dev mode auto-success, replace with AzamPay later) ──
 
 func (s *Service) InitiatePayment(ctx context.Context, customerID uuid.UUID, bookingID string, req *InitiatePaymentRequest) (*PaymentResponse, error) {
-	log.Printf("[Payment] Initiating payment for booking %s by customer %s", bookingID, customerID)
-
 	bookingUUID, err := uuid.Parse(bookingID)
 	if err != nil {
 		return nil, errors.New("invalid booking ID")
@@ -332,16 +333,22 @@ func (s *Service) InitiatePayment(ctx context.Context, customerID uuid.UUID, boo
 		return nil, errors.New("unauthorized")
 	}
 
-	if booking.PaymentStatus == "paid" {
+	// Only allow payment after maid has accepted
+	if booking.BookingStatus != "maid_accepted" {
+		return nil, fmt.Errorf("cannot pay booking in status: %s — maid must accept first", booking.BookingStatus)
+	}
+
+	if booking.PaymentStatus == "paid_held_escrow" {
 		return nil, errors.New("booking already paid")
 	}
 
 	pricing, err := s.repo.GetBookingPricing(ctx, bookingUUID)
 	if err != nil {
-		return nil, fmt.Errorf("failed to get pricing: %w", err)
+		return nil, fmt.Errorf("get pricing: %w", err)
 	}
 
-	// DEV MODE: Simulate successful payment
+	// DEV MODE: auto-success. Replace this block with AzamPay API call.
+	completedAt := time.Now()
 	payment := &Payment{
 		BookingID:            bookingUUID,
 		UserID:               customerID,
@@ -349,53 +356,304 @@ func (s *Service) InitiatePayment(ctx context.Context, customerID uuid.UUID, boo
 		Amount:               pricing.TotalAmount,
 		Provider:             req.Provider,
 		AccountNumber:        req.PhoneNumber,
-		Status:               "success", // DEV: Auto-success
-		AzampayTransactionID: fmt.Sprintf("DEV_%s_%d", bookingID, time.Now().Unix()),
-		AzampayReference:     fmt.Sprintf("REF_%s", bookingID),
+		Status:               "success",
+		AzampayTransactionID: fmt.Sprintf("DEV_%s_%d", bookingID[:8], time.Now().Unix()),
+		AzampayReference:     fmt.Sprintf("REF_%s", bookingID[:8]),
+		CompletedAt:          &completedAt,
 	}
-
-	completedAt := time.Now()
-	payment.CompletedAt = &completedAt
 
 	if err := s.repo.CreatePayment(ctx, payment); err != nil {
-		log.Printf("[Payment] Failed to create payment record: %v", err)
-		return nil, fmt.Errorf("failed to create payment: %w", err)
+		return nil, fmt.Errorf("create payment: %w", err)
 	}
 
-	// Update booking payment status
-	if err := s.repo.UpdatePaymentStatus(ctx, bookingUUID, "paid"); err != nil {
-		log.Printf("[Payment] Failed to update payment status: %v", err)
-		return nil, fmt.Errorf("failed to update payment status: %w", err)
+	if err := s.repo.UpdatePaymentStatus(ctx, bookingUUID, "paid_held_escrow"); err != nil {
+		return nil, fmt.Errorf("update payment status: %w", err)
 	}
 
-	// Update booking status
 	if err := s.repo.UpdateBookingStatus(ctx, bookingUUID, "confirmed"); err != nil {
-		log.Printf("[Payment] Failed to update booking status: %v", err)
+		return nil, fmt.Errorf("update booking status: %w", err)
 	}
 
-	// Add timeline event
-	timelineEvent := &BookingTimeline{
+	s.repo.AddTimelineEvent(ctx, &BookingTimeline{
 		BookingID:      bookingUUID,
-		EventType:      "payment_received",
+		EventType:      "payment_confirmed",
 		EventTimestamp: time.Now(),
 		TriggeredBy:    &customerID,
-		Notes:          fmt.Sprintf("Payment via %s", req.Provider),
-	}
-	s.repo.AddTimelineEvent(ctx, timelineEvent)
+		Notes:          fmt.Sprintf("Payment via %s (DEV MODE)", req.Provider),
+	})
 
-	// Notify maid
+	// Notify both parties
 	s.notificationSvc.NotifyMaidBookingConfirmed(ctx, booking.MaidID, booking.ReferenceNumber)
+	s.notificationSvc.NotifyCustomerPaymentConfirmed(ctx, customerID, booking.ReferenceNumber)
 
-	log.Printf("[Payment] Payment successful for booking %s (DEV MODE)", booking.ReferenceNumber)
+	log.Printf("[Payment] DEV: %s paid, status → confirmed", booking.ReferenceNumber)
 
 	return &PaymentResponse{
 		PaymentInitiated: true,
 		TransactionID:    payment.AzampayTransactionID,
-		Message:          "Payment successful (DEV MODE)",
+		Message:          "Malipo yamekamilika",
 	}, nil
 }
 
-// Helper functions
+// ── Workflow E1: Maid marks arrival ──────────────────────────────────────────
+
+func (s *Service) MarkArrival(ctx context.Context, maidID uuid.UUID, bookingID string, req *ArrivalRequest) (*BookingResponse, error) {
+	bookingUUID, err := uuid.Parse(bookingID)
+	if err != nil {
+		return nil, errors.New("invalid booking ID")
+	}
+
+	booking, err := s.repo.GetBookingByID(ctx, bookingUUID)
+	if err != nil {
+		return nil, errors.New("booking not found")
+	}
+
+	if booking.MaidID != maidID {
+		return nil, errors.New("unauthorized")
+	}
+
+	if booking.BookingStatus != "confirmed" {
+		return nil, fmt.Errorf("cannot mark arrival for booking in status: %s", booking.BookingStatus)
+	}
+
+	now := time.Now()
+	if err := s.repo.UpdateBookingStatus(ctx, bookingUUID, "in_progress"); err != nil {
+		return nil, fmt.Errorf("update status: %w", err)
+	}
+
+	// Store arrival GPS on booking location
+	if req.Latitude != 0 && req.Longitude != 0 {
+		s.repo.UpdateArrivalLocation(ctx, bookingUUID, req.Latitude, req.Longitude, now)
+	}
+
+	s.repo.AddTimelineEvent(ctx, &BookingTimeline{
+		BookingID:      bookingUUID,
+		EventType:      "maid_arrived",
+		EventTimestamp: now,
+		TriggeredBy:    &maidID,
+		Notes:          "Maid marked arrival, work started",
+	})
+
+	maidUser, _ := s.authRepo.FindUserByID(ctx, maidID)
+	maidName := "Msaidizi"
+	if maidUser != nil {
+		maidName = maidUser.FullName
+	}
+
+	s.notificationSvc.NotifyCustomerMaidArrived(ctx, booking.CustomerID, maidName)
+
+	log.Printf("[Booking] %s → in_progress, maid arrived", booking.ReferenceNumber)
+
+	booking.BookingStatus = "in_progress"
+	location, _ := s.repo.GetBookingLocation(ctx, bookingUUID)
+	pricing, _ := s.repo.GetBookingPricing(ctx, bookingUUID)
+	return s.buildBookingResponse(ctx, booking, location, pricing, nil)
+}
+
+// ── Workflow E2: Maid marks work complete ─────────────────────────────────────
+
+func (s *Service) MarkComplete(ctx context.Context, maidID uuid.UUID, bookingID string) (*BookingResponse, error) {
+	bookingUUID, err := uuid.Parse(bookingID)
+	if err != nil {
+		return nil, errors.New("invalid booking ID")
+	}
+
+	booking, err := s.repo.GetBookingByID(ctx, bookingUUID)
+	if err != nil {
+		return nil, errors.New("booking not found")
+	}
+
+	if booking.MaidID != maidID {
+		return nil, errors.New("unauthorized")
+	}
+
+	if booking.BookingStatus != "in_progress" {
+		return nil, fmt.Errorf("cannot mark complete for booking in status: %s", booking.BookingStatus)
+	}
+
+	now := time.Now()
+	if err := s.repo.UpdateServiceCompletedAt(ctx, bookingUUID, now); err != nil {
+		return nil, fmt.Errorf("update completion time: %w", err)
+	}
+
+	s.repo.AddTimelineEvent(ctx, &BookingTimeline{
+		BookingID:      bookingUUID,
+		EventType:      "maid_marked_complete",
+		EventTimestamp: now,
+		TriggeredBy:    &maidID,
+		Notes:          "Maid marked work as complete, awaiting customer confirmation",
+	})
+
+	maidUser, _ := s.authRepo.FindUserByID(ctx, maidID)
+	maidName := "Msaidizi"
+	if maidUser != nil {
+		maidName = maidUser.FullName
+	}
+
+	s.notificationSvc.NotifyCustomerWorkComplete(ctx, booking.CustomerID, maidName, booking.ReferenceNumber)
+
+	log.Printf("[Booking] %s marked complete by maid, awaiting customer confirm", booking.ReferenceNumber)
+
+	booking.BookingStatus = "in_progress"
+	location, _ := s.repo.GetBookingLocation(ctx, bookingUUID)
+	pricing, _ := s.repo.GetBookingPricing(ctx, bookingUUID)
+	return s.buildBookingResponse(ctx, booking, location, pricing, nil)
+}
+
+// ── Workflow E2 + F: Customer confirms completion → triggers escrow release ──
+
+func (s *Service) ConfirmCompletion(ctx context.Context, customerID uuid.UUID, bookingID string) (*BookingResponse, error) {
+	bookingUUID, err := uuid.Parse(bookingID)
+	if err != nil {
+		return nil, errors.New("invalid booking ID")
+	}
+
+	booking, err := s.repo.GetBookingByID(ctx, bookingUUID)
+	if err != nil {
+		return nil, errors.New("booking not found")
+	}
+
+	if booking.CustomerID != customerID {
+		return nil, errors.New("unauthorized")
+	}
+
+	if booking.BookingStatus != "in_progress" {
+		return nil, fmt.Errorf("cannot confirm booking in status: %s", booking.BookingStatus)
+	}
+
+	if err := s.repo.UpdateBookingStatus(ctx, bookingUUID, "completed"); err != nil {
+		return nil, fmt.Errorf("update status: %w", err)
+	}
+
+	s.repo.AddTimelineEvent(ctx, &BookingTimeline{
+		BookingID:      bookingUUID,
+		EventType:      "customer_confirmed",
+		EventTimestamp: time.Now(),
+		TriggeredBy:    &customerID,
+		Notes:          "Customer confirmed work completion",
+	})
+
+	booking.BookingStatus = "completed"
+	location, _ := s.repo.GetBookingLocation(ctx, bookingUUID)
+	pricing, _ := s.repo.GetBookingPricing(ctx, bookingUUID)
+
+	// Trigger Workflow F: release payment to maid
+	if err := s.releaseEscrowPayment(ctx, booking, pricing); err != nil {
+		log.Printf("[Payment] Warning: escrow release failed for %s: %v", booking.ReferenceNumber, err)
+	}
+
+	log.Printf("[Booking] %s completed and confirmed by customer", booking.ReferenceNumber)
+
+	return s.buildBookingResponse(ctx, booking, location, pricing, nil)
+}
+
+// ── Workflow F: Release escrow to maid wallet ─────────────────────────────────
+
+func (s *Service) releaseEscrowPayment(ctx context.Context, booking *Booking, pricing *BookingPricing) error {
+	if pricing == nil {
+		return errors.New("pricing not found for escrow release")
+	}
+
+	// Use DB transaction — all or nothing
+	return s.repo.WithTransaction(ctx, func(txCtx context.Context) error {
+		if err := s.repo.UpdatePaymentStatusTx(txCtx, booking.ID, "released_to_maid"); err != nil {
+			return fmt.Errorf("update payment status: %w", err)
+		}
+
+		if err := s.repo.CreditMaidWallet(txCtx, booking.MaidID, pricing.MaidPayoutAmount, booking.ID); err != nil {
+			return fmt.Errorf("credit maid wallet: %w", err)
+		}
+
+		maidSystemID := booking.ID // use booking ID as trigger reference
+		s.repo.AddTimelineEventTx(txCtx, &BookingTimeline{
+			BookingID:      booking.ID,
+			EventType:      "payment_released",
+			EventTimestamp: time.Now(),
+			TriggeredBy:    &maidSystemID,
+			Notes:          fmt.Sprintf("TZS %d released to maid wallet", pricing.MaidPayoutAmount),
+		})
+
+		s.notificationSvc.NotifyMaidPaymentReleased(ctx, booking.MaidID, pricing.MaidPayoutAmount, booking.ReferenceNumber)
+
+		log.Printf("[Payment] Escrow released: TZS %d → maid %s for booking %s",
+			pricing.MaidPayoutAmount, booking.MaidID, booking.ReferenceNumber)
+
+		return nil
+	})
+}
+
+// ── Maid: get their booking requests ─────────────────────────────────────────
+
+func (s *Service) GetMaidBookings(ctx context.Context, maidID uuid.UUID, status string, page, limit int) ([]BookingResponse, error) {
+	bookings, err := s.repo.GetMaidBookings(ctx, maidID, status, page, limit)
+	if err != nil {
+		return nil, fmt.Errorf("get maid bookings: %w", err)
+	}
+
+	var responses []BookingResponse
+	for _, booking := range bookings {
+		location, _ := s.repo.GetBookingLocation(ctx, booking.ID)
+		pricing, _ := s.repo.GetBookingPricing(ctx, booking.ID)
+		resp, err := s.buildBookingResponse(ctx, &booking, location, pricing, nil)
+		if err != nil {
+			log.Printf("[Booking] Warning: build response failed for %s: %v", booking.ID, err)
+			continue
+		}
+		responses = append(responses, *resp)
+	}
+
+	return responses, nil
+}
+
+// ── Customer: get their bookings ──────────────────────────────────────────────
+
+func (s *Service) GetCustomerBookings(ctx context.Context, customerID uuid.UUID, status string, page, limit int) ([]BookingResponse, error) {
+	bookings, err := s.repo.GetCustomerBookings(ctx, customerID, status, page, limit)
+	if err != nil {
+		return nil, fmt.Errorf("get customer bookings: %w", err)
+	}
+
+	var responses []BookingResponse
+	for _, booking := range bookings {
+		location, _ := s.repo.GetBookingLocation(ctx, booking.ID)
+		pricing, _ := s.repo.GetBookingPricing(ctx, booking.ID)
+		resp, err := s.buildBookingResponse(ctx, &booking, location, pricing, nil)
+		if err != nil {
+			log.Printf("[Booking] Warning: build response failed for %s: %v", booking.ID, err)
+			continue
+		}
+		responses = append(responses, *resp)
+	}
+
+	return responses, nil
+}
+
+func (s *Service) GetBookingByID(ctx context.Context, userID uuid.UUID, bookingID string) (*BookingResponse, error) {
+	bookingUUID, err := uuid.Parse(bookingID)
+	if err != nil {
+		return nil, errors.New("invalid booking ID")
+	}
+
+	booking, err := s.repo.GetBookingByID(ctx, bookingUUID)
+	if err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return nil, errors.New("booking not found")
+		}
+		return nil, fmt.Errorf("get booking: %w", err)
+	}
+
+	if booking.CustomerID != userID && booking.MaidID != userID {
+		return nil, errors.New("unauthorized to view this booking")
+	}
+
+	location, _ := s.repo.GetBookingLocation(ctx, bookingUUID)
+	pricing, _ := s.repo.GetBookingPricing(ctx, bookingUUID)
+	timeline, _ := s.repo.GetBookingTimeline(ctx, bookingUUID)
+
+	return s.buildBookingResponse(ctx, booking, location, pricing, timeline)
+}
+
+// ── Build response ────────────────────────────────────────────────────────────
 
 func (s *Service) buildBookingResponse(
 	ctx context.Context,
@@ -416,7 +674,6 @@ func (s *Service) buildBookingResponse(
 		DurationHours:   booking.DurationHours,
 	}
 
-	// Get maid info
 	maidUser, err := s.authRepo.FindUserByID(ctx, booking.MaidID)
 	if err == nil {
 		maidStats, _ := s.maidRepo.GetMaidStatistics(ctx, booking.MaidID)
@@ -432,7 +689,6 @@ func (s *Service) buildBookingResponse(
 		}
 	}
 
-	// Get customer info
 	customerUser, err := s.authRepo.FindUserByID(ctx, booking.CustomerID)
 	if err == nil {
 		customerStats, _ := s.customerRepo.GetOrCreateStatistics(ctx, booking.CustomerID)
@@ -447,9 +703,8 @@ func (s *Service) buildBookingResponse(
 		}
 	}
 
-	// Add location
 	if location != nil {
-		locationData := &BookingLocationData{
+		ld := &BookingLocationData{
 			Address:         location.CustomerAddress,
 			Latitude:        location.CustomerLocationLat,
 			Longitude:       location.CustomerLocationLng,
@@ -458,13 +713,12 @@ func (s *Service) buildBookingResponse(
 			ArrivalVerified: location.ArrivalVerifiedAt != nil,
 		}
 		if location.ArrivalVerifiedAt != nil {
-			arrivalTime := location.ArrivalVerifiedAt.Format(time.RFC3339)
-			locationData.ArrivalVerifiedAt = &arrivalTime
+			t := location.ArrivalVerifiedAt.Format(time.RFC3339)
+			ld.ArrivalVerifiedAt = &t
 		}
-		response.Location = locationData
+		response.Location = ld
 	}
 
-	// Add pricing
 	if pricing != nil {
 		response.Pricing = &BookingPricingData{
 			HourlyRate:      pricing.HourlyRate,
@@ -476,9 +730,8 @@ func (s *Service) buildBookingResponse(
 		}
 	}
 
-	// Add timeline
 	if timeline != nil {
-		var timelineItems []BookingTimelineItem
+		var items []BookingTimelineItem
 		for _, event := range timeline {
 			item := BookingTimelineItem{
 				EventType:      event.EventType,
@@ -486,28 +739,27 @@ func (s *Service) buildBookingResponse(
 				Notes:          event.Notes,
 			}
 			if event.TriggeredBy != nil {
-				triggeredBy := event.TriggeredBy.String()
-				item.TriggeredBy = &triggeredBy
+				tb := event.TriggeredBy.String()
+				item.TriggeredBy = &tb
 			}
-			timelineItems = append(timelineItems, item)
+			items = append(items, item)
 		}
-		response.Timeline = timelineItems
+		response.Timeline = items
 	}
 
 	return response, nil
 }
+
+// ── Helpers ───────────────────────────────────────────────────────────────────
 
 func calculateDuration(startTime, endTime string) (float64, error) {
 	start, err := time.Parse("15:04", startTime)
 	if err != nil {
 		return 0, err
 	}
-
 	end, err := time.Parse("15:04", endTime)
 	if err != nil {
 		return 0, err
 	}
-
-	duration := end.Sub(start)
-	return duration.Hours(), nil
+	return end.Sub(start).Hours(), nil
 }
