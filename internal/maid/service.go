@@ -255,3 +255,15 @@ func (s *Service) GetMaidProfile(ctx context.Context, userID uuid.UUID) (*MaidPr
 func (s *Service) SearchMaids(ctx context.Context, req *SearchMaidsRequest) ([]MaidSearchResult, error) {
 	return s.repo.SearchMaids(ctx, req)
 }
+
+func (s *Service) GetWallet(ctx context.Context, maidID uuid.UUID) (*WalletResponse, error) {
+	wallet, err := s.repo.GetOrCreateWallet(ctx, maidID)
+	if err != nil {
+		return nil, fmt.Errorf("get wallet: %w", err)
+	}
+	return &WalletResponse{
+		AvailableBalance: wallet.AvailableBalance,
+		TotalEarned:      wallet.TotalEarned,
+		TotalWithdrawn:   wallet.TotalWithdrawn,
+	}, nil
+}

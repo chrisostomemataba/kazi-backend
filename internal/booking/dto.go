@@ -61,6 +61,8 @@ type BookingResponse struct {
 	StartTime       string                `json:"start_time"`
 	EndTime         string                `json:"end_time"`
 	DurationHours   float64               `json:"duration_hours"`
+	ServiceStartedAt *string               `json:"service_started_at,omitempty"`
+	ServiceCompletedAt *string               `json:"service_completed_at,omitempty"`
 	Maid            *BookingMaidData      `json:"maid,omitempty"`
 	Customer        *BookingCustomerData  `json:"customer,omitempty"`
 	Location        *BookingLocationData  `json:"location,omitempty"`

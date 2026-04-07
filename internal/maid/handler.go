@@ -198,3 +198,14 @@ func (h *Handler) GetMaidByID(c *fiber.Ctx) error {
 
 	return util.SuccessResponse(c, profile, "Maid profile retrieved successfully")
 }
+
+func (h *Handler) GetWallet(c *fiber.Ctx) error {
+	userID := c.Locals("userID").(uuid.UUID)
+
+	wallet, err := h.service.GetWallet(c.Context(), userID)
+	if err != nil {
+		return util.ErrorResponse(c, fiber.StatusInternalServerError, err.Error())
+	}
+
+	return util.SuccessResponse(c, wallet, "Wallet retrieved successfully")
+}

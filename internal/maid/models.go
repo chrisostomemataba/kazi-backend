@@ -56,6 +56,25 @@ type MaidStatistics struct {
 	LastCalculatedAt         time.Time `gorm:"default:now()"`
 }
 
+type MaidWallet struct {
+	ID               uuid.UUID `gorm:"type:uuid;primary_key;default:gen_random_uuid()"`
+	MaidID           uuid.UUID `gorm:"type:uuid;not null;uniqueIndex"` 
+	AvailableBalance int       `gorm:"not null;default:0"`             
+	TotalEarned      int       `gorm:"not null;default:0"`             
+	TotalWithdrawn   int       `gorm:"not null;default:0"`             
+	CreatedAt        time.Time
+	UpdatedAt        time.Time
+}
+ 
+type WalletTransaction struct {
+	ID                uuid.UUID  `gorm:"type:uuid;primary_key;default:gen_random_uuid()"`
+	MaidID            uuid.UUID  `gorm:"type:uuid;not null;index:idx_wallet_tx"`
+	TransactionType   string     `gorm:"type:varchar(30);not null"` // job_completed_credit | withdrawal_debit | withdrawal_refund
+	Amount            int        `gorm:"not null"`                  // positive = credit, negative = debit
+	RelatedBookingID  *uuid.UUID `gorm:"type:uuid"`
+	CreatedAt         time.Time  `gorm:"index:idx_wallet_tx"`
+}
+
 func (mp *MaidProfile) BeforeCreate(tx *gorm.DB) error {
 	if mp.ID == uuid.Nil {
 		mp.ID = uuid.New()

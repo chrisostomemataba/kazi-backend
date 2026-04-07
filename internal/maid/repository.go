@@ -213,3 +213,26 @@ func (r *Repository) UpdateVerificationStatus(ctx context.Context, maidID uuid.U
 		Where("user_id = ?", maidID).
 		Updates(updates).Error
 }
+
+func (r *Repository) GetOrCreateWallet(ctx context.Context, maidID uuid.UUID) (*MaidWallet, error) {
+	var wallet MaidWallet
+	err := r.db.WithContext(ctx).Where("maid_id = ?", maidID).First(&wallet).Error
+	if err == gorm.ErrRecordNotFound {
+		wallet = MaidWallet{MaidID: maidID}
+		if createErr := r.db.WithContext(ctx).Create(&wallet).Error; createErr != nil {
+			return nil, createErr
+		}
+		return &wallet, nil
+	}
+	return &wallet, err
+}
+ 
+func (r *Repository) GetWalletTransactions(ctx context.Context, maidID uuid.UUID, limit, offset int) ([]WalletTransaction, error) {
+	var txs []WalletTransaction
+	err := r.db.WithContext(ctx).
+		Where("maid_id = ?", maidID).
+		Order("created_at DESC").
+		Limit(limit).Offset(offset).
+		Find(&txs).Error
+	return txs, err
+}

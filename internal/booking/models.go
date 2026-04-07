@@ -22,6 +22,8 @@ type Booking struct {
 	SpecialInstructions string   `gorm:"type:text"`
 	BookingStatus      string    `gorm:"type:varchar(30);default:'pending_maid';index:idx_booking_status"`
 	PaymentStatus      string    `gorm:"type:varchar(30);default:'unpaid';index:idx_payment_status"`
+	ServiceStartedAt    *time.Time
+	ServiceCompletedAt  *time.Time
 	CreatedAt          time.Time
 	UpdatedAt          time.Time
 }
