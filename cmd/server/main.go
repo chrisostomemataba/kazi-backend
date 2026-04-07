@@ -41,6 +41,8 @@ func main() {
 		&maid.MaidService{},
 		&maid.MaidVerificationDocument{},
 		&maid.MaidStatistics{},
+		&maid.MaidWallet{},
+		&maid.WalletTransaction{},
 		// Customer
 		&customer.CustomerProfile{},
 		&customer.CustomerLocation{},
@@ -145,6 +147,7 @@ func main() {
 	maidRoutes.Get("/profile", middleware.RequireRole("maid"), maidHandler.GetMyProfile)
 	maidRoutes.Put("/profile/location", middleware.RequireRole("maid"), maidHandler.UpdateLocation)
 	maidRoutes.Put("/profile/contract-rate", middleware.RequireRole("maid"), maidHandler.UpdateContractRate)
+	maidRoutes.Get("/wallet", middleware.RequireRole("maid"), maidHandler.GetWallet)
 
 	// Maid search routes (public - no auth needed)
 	maidsRoutes := api.Group("/maids")

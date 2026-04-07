@@ -584,8 +584,8 @@ func (s *Service) releaseEscrowPayment(ctx context.Context, booking *Booking, pr
 
 // ── Maid: get their booking requests ─────────────────────────────────────────
 
-func (s *Service) GetMaidBookings(ctx context.Context, maidID uuid.UUID, status string, page, limit int) ([]BookingResponse, error) {
-	bookings, err := s.repo.GetMaidBookings(ctx, maidID, status, page, limit)
+func (s *Service) GetMaidBookings(ctx context.Context, maidID uuid.UUID, status string, date string, page, limit int) ([]BookingResponse, error) {
+	bookings, err := s.repo.GetMaidBookings(ctx, maidID, status, date, page, limit)
 	if err != nil {
 		return nil, fmt.Errorf("get maid bookings: %w", err)
 	}

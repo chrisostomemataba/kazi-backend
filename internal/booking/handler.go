@@ -200,6 +200,7 @@ func (h *Handler) GetMaidBookings(c *fiber.Ctx) error {
 	status := c.Query("status", "")
 	page := c.QueryInt("page", 1)
 	limit := c.QueryInt("limit", 20)
+	date := c.Query("date", "")
 
 	if page < 1 {
 		page = 1
@@ -208,7 +209,7 @@ func (h *Handler) GetMaidBookings(c *fiber.Ctx) error {
 		limit = 20
 	}
 
-	bookings, err := h.service.GetMaidBookings(c.Context(), maidID, status, page, limit)
+	bookings, err := h.service.GetMaidBookings(c.Context(), maidID, status, date, page, limit)
 	if err != nil {
 		return util.ErrorResponse(c, fiber.StatusInternalServerError, err.Error())
 	}
@@ -218,5 +219,6 @@ func (h *Handler) GetMaidBookings(c *fiber.Ctx) error {
 		"page":     page,
 		"limit":    limit,
 		"total":    len(bookings),
+		"date":     date,
 	}, "Bookings retrieved")
 }

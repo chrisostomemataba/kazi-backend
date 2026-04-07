@@ -3,6 +3,7 @@ package booking
 import (
 	"context"
 	"time"
+	"fmt"
 
 	"github.com/google/uuid"
 	"gorm.io/gorm"
@@ -141,7 +142,7 @@ func (r *Repository) GetCustomerBookings(ctx context.Context, customerID uuid.UU
 	return bookings, err
 }
 
-func (r *Repository) GetMaidBookings(ctx context.Context, maidID uuid.UUID, status string, page, limit int) ([]Booking, error) {
+func (r *Repository) GetMaidBookings(ctx context.Context, maidID uuid.UUID, status string, date string, page, limit int) ([]Booking, error) {
 	var bookings []Booking
 	offset := (page - 1) * limit
 	query := r.db.WithContext(ctx).
@@ -150,32 +151,36 @@ func (r *Repository) GetMaidBookings(ctx context.Context, maidID uuid.UUID, stat
 	if status != "" {
 		query = query.Where("booking_status = ?", status)
 	}
+
+	if date != "" {
+        query = query.Where("booking_date = ?", date) // "2026-04-09"
+    }
+
 	err := query.Limit(limit).Offset(offset).Find(&bookings).Error
 	return bookings, err
 }
 
-// CreditMaidWallet upserts the maid wallet and inserts a transaction record.
-// Called inside a DB transaction from releaseEscrowPayment.
 func (r *Repository) CreditMaidWallet(ctx context.Context, maidID uuid.UUID, amount int, bookingID uuid.UUID) error {
-	// Upsert wallet
+	// Upsert wallet — creates if first job, updates if returning
 	err := r.db.WithContext(ctx).Exec(`
-		INSERT INTO maid_wallets (id, maid_id, available_balance, total_earned, created_at, updated_at)
-		VALUES (gen_random_uuid(), ?, ?, ?, NOW(), NOW())
+		INSERT INTO maid_wallets (id, maid_id, available_balance, total_earned, total_withdrawn, created_at, updated_at)
+		VALUES (gen_random_uuid(), ?, ?, ?, 0, NOW(), NOW())
 		ON CONFLICT (maid_id) DO UPDATE
-		SET available_balance = maid_wallets.available_balance + ?,
-		    total_earned = maid_wallets.total_earned + ?,
-		    updated_at = NOW()
-	`, maidID, amount, amount, amount, amount).Error
+		SET available_balance = maid_wallets.available_balance + EXCLUDED.available_balance,
+		    total_earned      = maid_wallets.total_earned + EXCLUDED.total_earned,
+		    updated_at        = NOW()
+	`, maidID, amount, amount).Error
 	if err != nil {
-		return err
+		return fmt.Errorf("upsert wallet: %w", err)
 	}
-
-	// Log transaction
+ 
+	// Record the credit transaction
 	return r.db.WithContext(ctx).Exec(`
 		INSERT INTO wallet_transactions (id, maid_id, transaction_type, amount, related_booking_id, created_at)
 		VALUES (gen_random_uuid(), ?, 'job_completed_credit', ?, ?, NOW())
 	`, maidID, amount, bookingID).Error
 }
+ 
 
 // WithTransaction wraps operations in a DB transaction.
 func (r *Repository) WithTransaction(ctx context.Context, fn func(ctx context.Context) error) error {

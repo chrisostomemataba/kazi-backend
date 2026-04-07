@@ -100,3 +100,9 @@ type MaidSearchResult struct {
 	TotalReviews        int      `json:"total_reviews"`
 	TotalJobsCompleted  int      `json:"total_jobs_completed"`
 }
+
+type WalletResponse struct {
+	AvailableBalance int `json:"available_balance"`
+	TotalEarned      int `json:"total_earned"`
+	TotalWithdrawn   int `json:"total_withdrawn"`
+}
