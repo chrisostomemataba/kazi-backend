@@ -147,7 +147,10 @@ func (s *Service) CreateBooking(ctx context.Context, customerID uuid.UUID, req *
 	}
 
 	if !validation.CanBook {
-		return nil, fmt.Errorf("booking validation failed: %v", validation.Issues)
+		if len(validation.Issues) > 0 {
+			return nil, errors.New(validation.Issues[0])
+		}
+		return nil, errors.New("unable to create booking")
 	}
 
 	// Get maid profile for pricing

@@ -3,6 +3,7 @@ package auth
 import (
 	"errors"
 	"fmt"
+	"log"
 	"math/rand"
 	"time"
 
@@ -16,18 +17,31 @@ type Service struct {
 	repo       *Repository
 	smsService *sms.SMSService
 	jwtSecret  string
+	isDev      bool
 }
 
-func NewService(repo *Repository, smsService *sms.SMSService, jwtSecret string) *Service {
+// DEV BYPASS — delete before production
+const (
+	devPhone = "255712433664"
+	devOTP   = "000000"
+)
+
+func NewService(repo *Repository, smsService *sms.SMSService, jwtSecret string, isDev bool) *Service {
 	return &Service{
 		repo:       repo,
 		smsService: smsService,
 		jwtSecret:  jwtSecret,
+		isDev:      isDev,
 	}
 }
 
 func (s *Service) RequestOTP(phoneNumber string) error {
 	formattedPhone := util.FormatPhoneNumber(phoneNumber)
+
+	// DEV BYPASS — skip SMS for dev number, delete before prod
+	if s.isDev && formattedPhone == devPhone {
+		return nil
+	}
 
 	// Rate limiting: max 3 OTPs per 10 minutes
 	recentCount, err := s.repo.CountRecentOTPs(formattedPhone, time.Now().Add(-10*time.Minute))
@@ -60,6 +74,17 @@ func (s *Service) RequestOTP(phoneNumber string) error {
 
 func (s *Service) VerifyOTP(phoneNumber, code string) (bool, error) {
 	formattedPhone := util.FormatPhoneNumber(phoneNumber)
+
+	log.Printf("DEBUG: formattedPhone='%s' devPhone='%s' match=%v", formattedPhone, devPhone, formattedPhone == devPhone)
+
+	if s.isDev && formattedPhone == devPhone && code == devOTP {
+		// Check if user exists to determine if new user or returning
+		_, err := s.repo.FindUserByPhone(formattedPhone)
+		if err != nil {
+			return true, nil  // new user, needs complete profile
+		}
+		return false, nil  // existing user, go to login
+	}
 
 	otp, err := s.repo.FindValidOTP(formattedPhone, code)
 	if err != nil {
@@ -193,6 +218,33 @@ func (s *Service) Login(phoneNumber string) (*AuthResponse, error) {
 
 func (s *Service) LoginWithOTP(phoneNumber, otpCode string) (*AuthResponse, error) {
 	formattedPhone := util.FormatPhoneNumber(phoneNumber)
+
+	// DEV BYPASS — accept hardcoded OTP for dev number, delete before prod
+    if s.isDev && formattedPhone == devPhone && otpCode == devOTP {
+        user, err := s.repo.FindUserByPhone(formattedPhone)
+        if err != nil {
+            return nil, errors.New("dev number not registered yet, complete profile first")
+        }
+        roles, err := s.repo.GetUserRoles(user.ID)
+        if err != nil {
+            return nil, err
+        }
+        token, err := util.GenerateJWT(user.ID, roles, s.jwtSecret)
+        if err != nil {
+            return nil, fmt.Errorf("generate token: %w", err)
+        }
+        return &AuthResponse{
+            Token: token,
+            User: &UserData{
+                ID:              user.ID.String(),
+                PhoneNumber:     user.PhoneNumber,
+                FullName:        user.FullName,
+                ProfilePhotoURL: user.ProfilePhotoURL,
+                Roles:           roles,
+            },
+        }, nil
+    }
+
 
 	// Verify OTP
 	otp, err := s.repo.FindValidOTP(formattedPhone, otpCode)
