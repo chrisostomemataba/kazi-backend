@@ -88,7 +88,8 @@ func main() {
 
 	// Services
 	notificationService := notification.NewService(db)
-	authService := auth.NewService(authRepo, smsService, cfg.JWTSecret)
+	isDev := cfg.Environment == "development"
+	authService := auth.NewService(authRepo, smsService, cfg.JWTSecret, isDev)
 	maidService := maid.NewService(maidRepo, authRepo, minioService, notificationService)
 	customerService := customer.NewService(customerRepo, authRepo)
 	bookingService := booking.NewService(bookingRepo, authRepo, maidRepo, customerRepo, notificationService)

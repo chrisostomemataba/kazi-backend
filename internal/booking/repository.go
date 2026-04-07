@@ -61,20 +61,22 @@ func (r *Repository) GetBookingTimeline(ctx context.Context, bookingID uuid.UUID
 
 func (r *Repository) CheckMaidAvailability(ctx context.Context, maidID uuid.UUID, bookingDate time.Time, startTime, endTime string) (bool, error) {
 	var count int64
-	
+
 	err := r.db.WithContext(ctx).
 		Model(&Booking{}).
 		Where("maid_id = ?", maidID).
 		Where("booking_date = ?", bookingDate).
-		Where("booking_status IN ?", []string{"pending_maid", "maid_accepted", "confirmed", "in_progress"}).
-		Where("(start_time < ? AND end_time > ?) OR (start_time < ? AND end_time > ?) OR (start_time >= ? AND end_time <= ?)",
-			endTime, startTime, endTime, endTime, startTime, endTime).
+		Where("booking_status IN ?", []string{"confirmed", "in_progress"}).
+		Where(
+			"(start_time < ? AND end_time > ?)",
+			endTime, startTime,
+		).
 		Count(&count).Error
-	
+
 	if err != nil {
 		return false, err
 	}
-	
+
 	return count == 0, nil
 }
 
