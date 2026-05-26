@@ -81,6 +81,7 @@ func registerBookingRoutes(api fiber.Router, h *booking.Handler, jwtSecret strin
 	customer.Post("/validate", middleware.RequireRole("customer"), h.ValidateBooking)
 	customer.Post("/create", middleware.RequireRole("customer"), h.CreateBooking)
 	customer.Get("/my-bookings", middleware.RequireRole("customer"), h.GetMyBookings)
+	customer.Get("/:id", middleware.RequireRole("customer"), h.GetBookingByID)     
 	customer.Post("/:id/initiate-payment", middleware.RequireRole("customer"), h.InitiatePayment)
 	customer.Post("/:id/confirm", middleware.RequireRole("customer"), h.ConfirmCompletion)
 

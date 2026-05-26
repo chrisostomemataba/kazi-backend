@@ -61,6 +61,7 @@ func main() {
 		os.Exit(1)
 	}
 
+	// Infrastructure
 	smsService := sms.NewSMSService(cfg.SMSAPIToken, cfg.SMSSenderID, cfg.SMSBaseURL)
 
 	minioService, err := storage.NewMinIOService(
@@ -78,35 +79,15 @@ func main() {
 	hub := wsHub.NewHub()
 	go hub.Run()
 
-	// Repositories
-	authRepo     := auth.NewRepository(db)
-	maidRepo     := maid.NewRepository(db)
-	customerRepo := customer.NewRepository(db)
-	bookingRepo  := booking.NewRepository(db)
-	reviewRepo   := review.NewRepository(db)
-	adminRepo    := admin.NewRepository(db)
-
-	// Services
-	isDev               := cfg.Environment == "development"
-	notificationService := notification.NewService(db)
-	authService         := auth.NewService(authRepo, smsService, cfg.JWTSecret, isDev)
-	maidService         := maid.NewService(maidRepo, authRepo, minioService, notificationService)
-	customerService     := customer.NewService(customerRepo, authRepo)
-	bookingService      := booking.NewService(bookingRepo, authRepo, maidRepo, customerRepo, notificationService)
-	reviewService       := review.NewService(reviewRepo, authRepo, bookingRepo)
-	adminService        := admin.NewService(adminRepo, minioService, notificationService, cfg.JWTSecret)
-
-	// Handlers
-	handlers := routes.Handlers{
-		Auth:         auth.NewHandler(authService),
-		Maid:         maid.NewHandler(maidService),
-		Customer:     customer.NewHandler(customerService),
-		Booking:      booking.NewHandler(bookingService),
-		Review:       review.NewHandler(reviewService),
-		Admin:        admin.NewHandler(adminService),
-		Notification: notification.NewHandler(notificationService),
-		WebSocket:    notification.NewWebSocketHandler(hub, cfg.JWTSecret),
-	}
+	// Domain modules — order matters: shared deps built first
+	isDev           := cfg.Environment == "development"
+	authModule      := auth.NewModule(db, smsService, cfg.JWTSecret, isDev)
+	notifModule     := notification.NewModule(db, hub, cfg.JWTSecret)
+	maidModule      := maid.NewModule(db, authModule.Repository, minioService, notifModule.Service)
+	customerModule  := customer.NewModule(db, authModule.Repository)
+	bookingModule   := booking.NewModule(db, authModule.Repository, maidModule.Repository, customerModule.Repository, notifModule.Service)
+	reviewModule    := review.NewModule(db, authModule.Repository, bookingModule.Repository)
+	adminModule     := admin.NewModule(db, minioService, notifModule.Service, cfg.JWTSecret)
 
 	app := fiber.New(fiber.Config{
 		ErrorHandler: errorHandler,
@@ -119,7 +100,16 @@ func main() {
 		AllowHeaders: "Origin, Content-Type, Accept, Authorization",
 	}))
 
-	routes.Register(app, handlers, cfg.JWTSecret)
+	routes.Register(app, routes.Handlers{
+		Auth:         authModule.Handler,
+		Maid:         maidModule.Handler,
+		Customer:     customerModule.Handler,
+		Booking:      bookingModule.Handler,
+		Review:       reviewModule.Handler,
+		Admin:        adminModule.Handler,
+		Notification: notifModule.Handler,
+		WebSocket:    notifModule.WebSocketHandler,
+	}, cfg.JWTSecret)
 
 	slog.Info("Server starting", "port", cfg.Port)
 	slog.Info("MinIO endpoint", "endpoint", cfg.MinIOEndpoint)
