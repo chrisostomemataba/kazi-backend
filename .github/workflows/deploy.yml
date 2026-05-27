@@ -17,7 +17,7 @@ jobs:
           username: ${{ secrets.SERVER_USER }}
           key: ${{ secrets.SERVER_SSH_KEY }}
           script: |
-            cd /opt/projects/kazi
+            cd /opt/projects/kazi-backend
             git pull origin main
             docker compose up --build -d
             docker image prune -f
