@@ -13,6 +13,7 @@ services:
       - postgres_data:/var/lib/postgresql/data
     networks:
       - kazi-network
+      - web
 
   minio:
     image: quay.io/minio/minio:RELEASE.2024-09-09T16-59-28Z
@@ -50,3 +51,5 @@ volumes:
 networks:
   kazi-network:
     driver: bridge
+  web:
+    external: true
