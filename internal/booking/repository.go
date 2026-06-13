@@ -190,3 +190,38 @@ func (r *Repository) WithTransaction(ctx context.Context, fn func(ctx context.Co
 		return fn(ctx)
 	})
 }
+
+func (r *Repository) UpdateMaidLocation(ctx context.Context, bookingID string, lat, lng float64) error {
+	return r.db.WithContext(ctx).Exec(`
+		UPDATE bookings
+		SET maid_current_lat = ?,
+		    maid_current_lng = ?,
+		    maid_location_updated_at = NOW()
+		WHERE id = ?
+	`, lat, lng, bookingID).Error
+}
+
+func (r *Repository) MaidLocationByBookingID(ctx context.Context, bookingID string) (*MaidLocationRow, error) {
+	var result MaidLocationRow
+	tx := r.db.WithContext(ctx).Raw(`
+		SELECT
+		    b.maid_current_lat         AS maid_lat,
+		    b.maid_current_lng         AS maid_lng,
+		    b.maid_location_updated_at AS updated_at,
+		    bl.customer_location_lat   AS customer_lat,
+		    bl.customer_location_lng   AS customer_lng,
+		    b.maid_id,
+		    b.customer_id,
+		    b.booking_status
+		FROM bookings b
+		LEFT JOIN booking_locations bl ON bl.booking_id = b.id
+		WHERE b.id = ?
+	`, bookingID).Scan(&result)
+	if tx.Error != nil {
+		return nil, tx.Error
+	}
+	if tx.RowsAffected == 0 {
+		return nil, gorm.ErrRecordNotFound
+	}
+	return &result, nil
+}

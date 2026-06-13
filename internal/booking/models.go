@@ -22,10 +22,13 @@ type Booking struct {
 	SpecialInstructions string   `gorm:"type:text"`
 	BookingStatus      string    `gorm:"type:varchar(30);default:'pending_maid';index:idx_booking_status"`
 	PaymentStatus      string    `gorm:"type:varchar(30);default:'unpaid';index:idx_payment_status"`
-	ServiceStartedAt    *time.Time
-	ServiceCompletedAt  *time.Time
-	CreatedAt          time.Time
-	UpdatedAt          time.Time
+	ServiceStartedAt     *time.Time
+	ServiceCompletedAt   *time.Time
+	MaidCurrentLat       *float64   `gorm:"type:decimal(10,8)"`
+	MaidCurrentLng       *float64   `gorm:"type:decimal(11,8)"`
+	MaidLocationUpdatedAt *time.Time
+	CreatedAt            time.Time
+	UpdatedAt            time.Time
 }
 
 type BookingLocation struct {
@@ -118,4 +121,28 @@ func (p *Payment) BeforeCreate(tx *gorm.DB) error {
 func generateBookingReference() string {
 	now := time.Now()
 	return fmt.Sprintf("BK%d%02d%02d%04d", now.Year(), now.Month(), now.Day(), rand.Intn(10000))
+}
+
+type MaidLocationRow struct {
+	MaidLat       *float64
+	MaidLng       *float64
+	UpdatedAt     *time.Time
+	CustomerLat   float64
+	CustomerLng   float64
+	MaidID        string
+	CustomerID    string
+	BookingStatus string
+}
+
+type UpdateLocationRequest struct {
+	Lat float64 `json:"lat"`
+	Lng float64 `json:"lng"`
+}
+
+type MaidLocationResponse struct {
+	Lat        float64   `json:"lat"`
+	Lng        float64   `json:"lng"`
+	UpdatedAt  time.Time `json:"updated_at"`
+	DistanceKm float64   `json:"distance_km"`
+	ETAMinutes int       `json:"eta_minutes"`
 }

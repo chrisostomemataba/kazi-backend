@@ -46,3 +46,7 @@ go.work
 # Application binaries
 /main
 /kazi-backend
+
+GOAL.md
+STEPS.md
+CLAUDE.md

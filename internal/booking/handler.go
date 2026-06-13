@@ -222,3 +222,47 @@ func (h *Handler) GetMaidBookings(c *fiber.Ctx) error {
 		"date":     date,
 	}, "Bookings retrieved")
 }
+
+func (h *Handler) UpdateMaidLocation(c *fiber.Ctx) error {
+	bookingID := c.Params("id")
+	callerID := c.Locals("userID").(uuid.UUID)
+
+	var req UpdateLocationRequest
+	if err := c.BodyParser(&req); err != nil {
+		return util.ErrorResponse(c, fiber.StatusBadRequest, err.Error())
+	}
+
+	if err := h.service.UpdateMaidLocation(c.Context(), bookingID, callerID.String(), req.Lat, req.Lng); err != nil {
+		switch err {
+		case ErrUnauthorized:
+			return util.ErrorResponse(c, fiber.StatusForbidden, err.Error())
+		case ErrInvalidState:
+			return util.ErrorResponse(c, fiber.StatusConflict, err.Error())
+		case ErrInvalidLocation:
+			return util.ErrorResponse(c, fiber.StatusBadRequest, err.Error())
+		default:
+			return util.ErrorResponse(c, fiber.StatusInternalServerError, err.Error())
+		}
+	}
+
+	return util.SuccessResponse(c, nil, "Location updated")
+}
+
+func (h *Handler) GetMaidLocation(c *fiber.Ctx) error {
+	bookingID := c.Params("id")
+	callerID := c.Locals("userID").(uuid.UUID)
+
+	location, err := h.service.MaidLocationForCustomer(c.Context(), bookingID, callerID.String())
+	if err != nil {
+		switch err {
+		case ErrUnauthorized:
+			return util.ErrorResponse(c, fiber.StatusForbidden, err.Error())
+		case ErrLocationNotAvailable, ErrBookingNotFound:
+			return util.ErrorResponse(c, fiber.StatusNotFound, err.Error())
+		default:
+			return util.ErrorResponse(c, fiber.StatusInternalServerError, err.Error())
+		}
+	}
+
+	return util.SuccessResponse(c, location, "Location retrieved")
+}

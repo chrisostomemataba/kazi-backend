@@ -92,6 +92,10 @@ func registerBookingRoutes(api fiber.Router, h *booking.Handler, jwtSecret strin
 	maidBookings.Post("/:id/decline", middleware.RequireRole("maid"), h.DeclineBooking)
 	maidBookings.Post("/:id/arrive", middleware.RequireRole("maid"), h.MarkArrival)
 	maidBookings.Post("/:id/complete", middleware.RequireRole("maid"), h.MarkComplete)
+
+	// Live location tracking
+	customer.Post("/:id/location", h.UpdateMaidLocation)
+	customer.Get("/:id/location", h.GetMaidLocation)
 }
 
 func registerReviewRoutes(api fiber.Router, h *review.Handler, jwtSecret string) {
