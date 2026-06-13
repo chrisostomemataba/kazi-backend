@@ -17,6 +17,14 @@ import (
 	"gorm.io/gorm"
 )
 
+var (
+	ErrBookingNotFound      = errors.New("booking not found")
+	ErrUnauthorized         = errors.New("unauthorized")
+	ErrLocationNotAvailable = errors.New("location not available yet")
+	ErrInvalidLocation      = errors.New("invalid coordinates")
+	ErrInvalidState         = errors.New("booking not in trackable state")
+)
+
 const (
 	PlatformCommissionRate = 15.0
 	GPSVerificationRadius  = 500
@@ -762,4 +770,61 @@ func calculateDuration(startTime, endTime string) (float64, error) {
 		return 0, err
 	}
 	return end.Sub(start).Hours(), nil
+}
+
+func (s *Service) UpdateMaidLocation(ctx context.Context, bookingID, callerID string, lat, lng float64) error {
+	if lat < -90 || lat > 90 || lng < -180 || lng > 180 {
+		return ErrInvalidLocation
+	}
+
+	row, err := s.repo.MaidLocationByBookingID(ctx, bookingID)
+	if err != nil {
+		return ErrBookingNotFound
+	}
+
+	if row.MaidID != callerID {
+		return ErrUnauthorized
+	}
+
+	if row.BookingStatus != "confirmed" && row.BookingStatus != "in_progress" {
+		return ErrInvalidState
+	}
+
+	return s.repo.UpdateMaidLocation(ctx, bookingID, lat, lng)
+}
+
+func (s *Service) MaidLocationForCustomer(ctx context.Context, bookingID, callerID string) (*MaidLocationResponse, error) {
+	row, err := s.repo.MaidLocationByBookingID(ctx, bookingID)
+	if err != nil {
+		return nil, ErrBookingNotFound
+	}
+
+	if row.CustomerID != callerID {
+		return nil, ErrUnauthorized
+	}
+
+	if row.MaidLat == nil || row.MaidLng == nil || row.UpdatedAt == nil {
+		return nil, ErrLocationNotAvailable
+	}
+
+	dist := haversineKm(*row.MaidLat, *row.MaidLng, row.CustomerLat, row.CustomerLng)
+	eta := int((dist / 4.0) * 60)
+
+	return &MaidLocationResponse{
+		Lat:        *row.MaidLat,
+		Lng:        *row.MaidLng,
+		UpdatedAt:  *row.UpdatedAt,
+		DistanceKm: math.Round(dist*100) / 100,
+		ETAMinutes: eta,
+	}, nil
+}
+
+func haversineKm(lat1, lng1, lat2, lng2 float64) float64 {
+	const R = 6371.0
+	dLat := (lat2 - lat1) * math.Pi / 180
+	dLng := (lng2 - lng1) * math.Pi / 180
+	a := math.Sin(dLat/2)*math.Sin(dLat/2) +
+		math.Cos(lat1*math.Pi/180)*math.Cos(lat2*math.Pi/180)*
+			math.Sin(dLng/2)*math.Sin(dLng/2)
+	return R * 2 * math.Atan2(math.Sqrt(a), math.Sqrt(1-a))
 }

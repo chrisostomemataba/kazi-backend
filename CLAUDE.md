@@ -1,114 +1,73 @@
-# KAZI - Home Services Marketplace
+# KAZI Backend — Live Tracking Context
 
-## Project Overview
-KAZI is a mobile-first platform connecting customers with verified home service workers (maids) in Tanzania. The app handles booking, payments via AzamPay (M-Pesa, Tigo Pesa, Airtel Money, Halopesa), escrow management, and dual-role user support (one phone number can be both customer and worker).
+## What this task is
 
-## Core Business Logic
-- **Phone-only authentication**: No emails, SMS OTP verification
-- **Dual roles**: Single user can be customer AND maid simultaneously
-- **Payment flow**: Customer pays → AzamPay holds in escrow → Service completes → Customer confirms → Maid receives payout (minus 15% commission)
-- **Currency**: All amounts in TZS (Tanzanian Shillings), stored as integers (no decimals)
-- **Verification**: Manual admin review of maid selfie videos (15sec) + ID photos
-- **MinIO storage**: All documents, photos, videos stored in MinIO buckets
+Add live maid location tracking to the existing booking flow. The maid sends GPS coordinates to the backend while en route. The customer polls those coordinates to display a live map. Nothing else changes.
 
-## Tech Stack
-**Backend:**
-- Go with Fiber framework (lightweight, fast)
-- PostgreSQL database
-- MinIO for object storage
-- AzamPay API integration
-- SMS gateway integration (for OTP)
+## Scope boundary
 
-**Frontend:**
-- Flutter (cross-platform iOS/Android)
-- Rich UI libraries matching iOS design aesthetic
-- State management: Provider or Riverpod
-- HTTP client for API calls
+Touch only:
+- one new migration file
+- `internal/booking/handler.go`
+- `internal/booking/service.go`
+- `internal/booking/repository.go`
+- `internal/routes/routes.go`
 
-## Key Terminology
-- **Msaidizi/Maid**: The worker providing services
-- **Customer**: Person hiring services
-- **Booking**: A scheduled service appointment
-- **Escrow**: Platform wallet holding customer payment until service completion
-- **Disbursement**: Payout to maid after job completion
-- **Verification**: Manual admin approval process for new maids
+Do not touch payment, auth, notification, or any other domain.
 
-## Database Principles
-- Use UUIDs for all primary keys (not auto-increment integers)
-- All timestamps use PostgreSQL TIMESTAMP type
-- Phone numbers stored as VARCHAR(13) in format: 255712345678 (no spaces, dashes)
-- Money stored as INTEGER (amount in TZS cents/smallest unit)
-- Use ENUM types for status fields where applicable
-- Proper foreign key constraints with ON DELETE CASCADE where appropriate
+## Existing booking state machine
 
-## Payment Flow States
-**Booking States:**
+```
 pending_maid → maid_accepted → payment_pending → confirmed → in_progress → completed
-
-**Payment States:**
-unpaid → payment_initiated → paid_held_escrow → released_to_maid
-
-**Escrow States:**
-holding → released_to_maid OR refunded_to_customer
-
-## File Storage Structure (MinIO)
-```
-taskmaid-tz/
-├── profiles/original/{user_id}.jpg
-├── profiles/thumbnails/{user_id}_thumb.jpg
-├── verification/videos/{maid_id}_{timestamp}.mp4
-├── verification/ids/{maid_id}_{timestamp}.jpg
-└── disputes/{booking_id}/evidence_{n}.jpg
 ```
 
-## API Design Principles
-- RESTful endpoints
-- JSON request/response bodies
-- Bearer token authentication (JWT)
-- Consistent error response format
-- Phone number in format 255XXXXXXXXX (no + prefix in API)
-- All datetime in ISO 8601 format
-- Pagination for lists (limit, offset query params)
+Tracking is only active when `booking_status = 'confirmed'` (maid accepted, payment done, maid en route) or `booking_status = 'in_progress'` (maid has arrived and started work).
 
-## Business Rules
-- Minimum withdrawal: TZS 10,000
-- Platform commission: 15% of booking total
-- OTP expiry: 10 minutes
-- Payment pending timeout: 24 hours (auto-cancel if not paid)
-- Auto-complete timeout: 24 hours after maid marks complete (if customer doesn't confirm)
-- Verification review SLA: 24-48 hours
+The maid taps "Ninaelekea" (I'm on my way) — this is when location sharing starts. The maid taps "Nimefikisha" (I've arrived) — this is Workflow E Step 1, which transitions to `in_progress`. Location sharing stops after that transition.
 
-## Localization
-- Primary language: Swahili
-- All user-facing text should support Swahili translations
-- Store translations in JSON files, not hardcoded
-- Date/time formats: DD/MM/YYYY, 12-hour format with AM/PM
+## Domain module pattern
 
-## Security Considerations
-- Rate limiting on OTP generation (max 3 per 10 minutes per phone)
-- Hash sensitive data at rest
-- Use prepared statements (SQL injection prevention)
-- Validate all file uploads (type, size, content)
-- Implement request signing for webhook callbacks
-- Store AzamPay credentials in environment variables only
+Each domain owns its own `setup.go` with `repo → service → handler` wiring. `main.go` does infrastructure only. Routes live in `internal/routes/routes.go`.
 
-## Performance Guidelines
-- Database queries should use indexes
-- Implement connection pooling (Postgres, MinIO)
-- Cache frequently accessed data (maid listings, platform settings)
-- Optimize images before storage (thumbnails for profiles)
-- Use background jobs for non-critical tasks (notifications, analytics)
+When you add a function to service or repository, follow the existing constructor pattern — do not add package-level variables or init functions.
 
-## Testing Approach
-- Unit tests for business logic functions
-- Integration tests for API endpoints
-- Mock external services (AzamPay, SMS gateway)
-- Test database migrations rollback capability
-- E2E tests for critical flows (booking, payment, withdrawal)
+## Authorization rules
 
-## Deployment Context
-- Low-cost VPS hosting (DigitalOcean, Linode)
-- Single server initially (backend + postgres + minio)
-- Frontend deployed as mobile apps (App Store, Play Store)
-- No docker initially (direct systemd service)
-- Backup strategy: Daily postgres dumps, weekly MinIO snapshots
+- `POST /api/v1/bookings/:id/location` — JWT required, caller must be the maid assigned to that booking
+- `GET /api/v1/bookings/:id/location` — JWT required, caller must be the customer of that booking
+
+Check both conditions in the service layer, not just the handler.
+
+## ETA calculation
+
+Use the haversine formula. Walking speed constant: 4.0 km/h. Return `distance_km` (float, 2 decimal places) and `eta_minutes` (int). No external routing API.
+
+The customer's coordinates come from `bookings.customer_lat` and `bookings.customer_lng` which already exist on the booking record.
+
+## Database column types
+
+```
+maid_current_lat          DECIMAL(10,8)   NULLABLE
+maid_current_lng          DECIMAL(11,8)   NULLABLE
+maid_location_updated_at  TIMESTAMP       NULLABLE
+```
+
+Add these to the `bookings` table via a migration. Do not create a separate table.
+
+## Docker
+
+The project runs via Docker Compose. After adding the migration file, the migration must be applied. Run:
+
+```
+docker compose exec app go run ./cmd/migrate/main.go up
+```
+
+or whatever the existing migration runner command is in the project. Check `Makefile` or `docker-compose.yml` for the exact command before running.
+
+## Response format
+
+All responses follow the existing pattern in `internal/common/util/response.go`. Use whatever `SuccessResponse` and `ErrorResponse` helpers already exist — do not invent new ones.
+
+## No new dependencies
+
+Do not add any Go packages. `math` is part of the standard library and covers haversine.
