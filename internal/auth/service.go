@@ -283,7 +283,7 @@ func (s *Service) LoginWithOTP(phoneNumber, otpCode string) (*AuthResponse, erro
 		return nil, errors.New("user has no roles assigned, please contact support")
 	}
 
-	// Generate JWT token with roles
+	// Generate JWT token with roles set
 	token, err := util.GenerateJWT(user.ID, roles, s.jwtSecret)
 	if err != nil {
 		return nil, fmt.Errorf("failed to generate token: %w", err)
