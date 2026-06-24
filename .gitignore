@@ -47,6 +47,10 @@ go.work
 /main
 /kazi-backend
 
+# Documentation
 GOAL.md
 STEPS.md
 CLAUDE.md
+
+# Docker
+docker-compose.override.yml
