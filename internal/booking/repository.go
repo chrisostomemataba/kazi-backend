@@ -2,8 +2,8 @@ package booking
 
 import (
 	"context"
-	"time"
 	"fmt"
+	"time"
 
 	"github.com/google/uuid"
 	"gorm.io/gorm"
@@ -129,6 +129,32 @@ func (r *Repository) CreatePayment(ctx context.Context, payment *Payment) error 
 	return r.db.WithContext(ctx).Create(payment).Error
 }
 
+func (r *Repository) UpdateBookingPaymentCollectionTxID(ctx context.Context, bookingID uuid.UUID, transactionID string) error {
+	return r.db.WithContext(ctx).
+		Model(&Booking{}).
+		Where("id = ?", bookingID).
+		Update("payment_collection_transaction_id", transactionID).Error
+}
+
+func (r *Repository) UpdateBookingPaymentDisbursementTxID(ctx context.Context, bookingID uuid.UUID, transactionID string) error {
+	return r.db.WithContext(ctx).
+		Model(&Booking{}).
+		Where("id = ?", bookingID).
+		Update("payment_disbursement_transaction_id", transactionID).Error
+}
+
+func (r *Repository) GetBookingByCollectionTransactionID(ctx context.Context, transactionID string) (*Booking, error) {
+	var booking Booking
+	err := r.db.WithContext(ctx).Where("payment_collection_transaction_id = ?", transactionID).First(&booking).Error
+	return &booking, err
+}
+
+func (r *Repository) GetBookingByDisbursementTransactionID(ctx context.Context, transactionID string) (*Booking, error) {
+	var booking Booking
+	err := r.db.WithContext(ctx).Where("payment_disbursement_transaction_id = ?", transactionID).First(&booking).Error
+	return &booking, err
+}
+
 func (r *Repository) GetCustomerBookings(ctx context.Context, customerID uuid.UUID, status string, page, limit int) ([]Booking, error) {
 	var bookings []Booking
 	offset := (page - 1) * limit
@@ -153,8 +179,8 @@ func (r *Repository) GetMaidBookings(ctx context.Context, maidID uuid.UUID, stat
 	}
 
 	if date != "" {
-        query = query.Where("booking_date = ?", date) // "2026-04-09"
-    }
+		query = query.Where("booking_date = ?", date) // "2026-04-09"
+	}
 
 	err := query.Limit(limit).Offset(offset).Find(&bookings).Error
 	return bookings, err
@@ -173,14 +199,13 @@ func (r *Repository) CreditMaidWallet(ctx context.Context, maidID uuid.UUID, amo
 	if err != nil {
 		return fmt.Errorf("upsert wallet: %w", err)
 	}
- 
+
 	// Record the credit transaction
 	return r.db.WithContext(ctx).Exec(`
 		INSERT INTO wallet_transactions (id, maid_id, transaction_type, amount, related_booking_id, created_at)
 		VALUES (gen_random_uuid(), ?, 'job_completed_credit', ?, ?, NOW())
 	`, maidID, amount, bookingID).Error
 }
- 
 
 // WithTransaction wraps operations in a DB transaction.
 func (r *Repository) WithTransaction(ctx context.Context, fn func(ctx context.Context) error) error {

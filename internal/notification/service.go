@@ -140,6 +140,15 @@ func (s *Service) NotifyMaidPaymentReleased(ctx context.Context, maidID uuid.UUI
 	})
 }
 
+func (s *Service) NotifyCustomerPaymentFailed(ctx context.Context, customerID uuid.UUID, bookingRef string) error {
+	return s.CreateNotification(ctx, &Notification{
+		UserID:           customerID,
+		Title:            "Malipo Hayajafanikiwa",
+		Message:          fmt.Sprintf("Samahani, malipo ya booking %s hayajafanikiwa. Tafadhali jaribu tena.", bookingRef),
+		NotificationType: "payment_failed",
+	})
+}
+
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
 func (s *Service) GetUserNotifications(ctx context.Context, userID uuid.UUID, limit, offset int) ([]Notification, error) {

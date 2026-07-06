@@ -5,6 +5,7 @@ import (
 	"kazi-backend/internal/customer"
 	"kazi-backend/internal/maid"
 	"kazi-backend/internal/notification"
+	"kazi-backend/internal/payment"
 
 	"gorm.io/gorm"
 )
@@ -12,6 +13,7 @@ import (
 type Module struct {
 	Handler    *Handler
 	Repository *Repository
+	Service    *Service
 }
 
 func NewModule(
@@ -20,13 +22,15 @@ func NewModule(
 	maidRepo *maid.Repository,
 	customerRepo *customer.Repository,
 	notificationService *notification.Service,
+	paymentClient *payment.PaymentClient,
 ) *Module {
-	repo    := NewRepository(db)
-	service := NewService(repo, authRepo, maidRepo, customerRepo, notificationService)
+	repo := NewRepository(db)
+	service := NewService(repo, authRepo, maidRepo, customerRepo, notificationService, paymentClient)
 	handler := NewHandler(service)
 
 	return &Module{
 		Handler:    handler,
 		Repository: repo,
+		Service:    service,
 	}
 }

@@ -15,6 +15,7 @@ import (
 	"kazi-backend/internal/customer"
 	"kazi-backend/internal/maid"
 	"kazi-backend/internal/notification"
+	"kazi-backend/internal/payment"
 	"kazi-backend/internal/review"
 	"kazi-backend/internal/routes"
 
@@ -80,14 +81,16 @@ func main() {
 	go hub.Run()
 
 	// Domain modules — order matters: shared deps built first
-	isDev           := cfg.Environment == "development"
-	authModule      := auth.NewModule(db, smsService, cfg.JWTSecret, isDev)
-	notifModule     := notification.NewModule(db, hub, cfg.JWTSecret)
-	maidModule      := maid.NewModule(db, authModule.Repository, minioService, notifModule.Service)
-	customerModule  := customer.NewModule(db, authModule.Repository)
-	bookingModule   := booking.NewModule(db, authModule.Repository, maidModule.Repository, customerModule.Repository, notifModule.Service)
-	reviewModule    := review.NewModule(db, authModule.Repository, bookingModule.Repository)
-	adminModule     := admin.NewModule(db, minioService, notifModule.Service, cfg.JWTSecret)
+	isDev := cfg.Environment == "development"
+	authModule := auth.NewModule(db, smsService, cfg.JWTSecret, isDev)
+	notifModule := notification.NewModule(db, hub, cfg.JWTSecret)
+	maidModule := maid.NewModule(db, authModule.Repository, minioService, notifModule.Service)
+	customerModule := customer.NewModule(db, authModule.Repository)
+	paymentClient := payment.NewPaymentClient(cfg.PaymentServiceURL)
+	bookingModule := booking.NewModule(db, authModule.Repository, maidModule.Repository, customerModule.Repository, notifModule.Service, paymentClient)
+	paymentWebhookHandler := payment.NewWebhookHandler(bookingModule.Service, cfg.PaymentWebhookSecret)
+	reviewModule := review.NewModule(db, authModule.Repository, bookingModule.Repository)
+	adminModule := admin.NewModule(db, minioService, notifModule.Service, cfg.JWTSecret)
 
 	app := fiber.New(fiber.Config{
 		ErrorHandler: errorHandler,
@@ -101,14 +104,15 @@ func main() {
 	}))
 
 	routes.Register(app, routes.Handlers{
-		Auth:         authModule.Handler,
-		Maid:         maidModule.Handler,
-		Customer:     customerModule.Handler,
-		Booking:      bookingModule.Handler,
-		Review:       reviewModule.Handler,
-		Admin:        adminModule.Handler,
-		Notification: notifModule.Handler,
-		WebSocket:    notifModule.WebSocketHandler,
+		Auth:           authModule.Handler,
+		Maid:           maidModule.Handler,
+		Customer:       customerModule.Handler,
+		Booking:        bookingModule.Handler,
+		Review:         reviewModule.Handler,
+		Admin:          adminModule.Handler,
+		Notification:   notifModule.Handler,
+		WebSocket:      notifModule.WebSocketHandler,
+		PaymentWebhook: paymentWebhookHandler,
 	}, cfg.JWTSecret)
 
 	slog.Info("Server starting", "port", cfg.Port)

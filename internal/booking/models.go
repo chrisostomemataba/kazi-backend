@@ -10,38 +10,40 @@ import (
 )
 
 type Booking struct {
-	ID                 uuid.UUID `gorm:"type:uuid;primary_key;default:gen_random_uuid()"`
-	ReferenceNumber    string    `gorm:"type:varchar(20);uniqueIndex;not null"`
-	CustomerID         uuid.UUID `gorm:"type:uuid;not null;index:idx_customer_bookings"`
-	MaidID             uuid.UUID `gorm:"type:uuid;not null;index:idx_maid_bookings"`
-	ServiceType        string    `gorm:"type:varchar(50);not null"`
-	BookingDate        time.Time `gorm:"type:date;not null"`
-	StartTime          string    `gorm:"type:varchar(5);not null"` // HH:MM format
-	EndTime            string    `gorm:"type:varchar(5);not null"`
-	DurationHours      float64   `gorm:"type:decimal(4,2);not null"`
-	SpecialInstructions string   `gorm:"type:text"`
-	BookingStatus      string    `gorm:"type:varchar(30);default:'pending_maid';index:idx_booking_status"`
-	PaymentStatus      string    `gorm:"type:varchar(30);default:'unpaid';index:idx_payment_status"`
-	ServiceStartedAt     *time.Time
-	ServiceCompletedAt   *time.Time
-	MaidCurrentLat       *float64   `gorm:"type:decimal(10,8)"`
-	MaidCurrentLng       *float64   `gorm:"type:decimal(11,8)"`
-	MaidLocationUpdatedAt *time.Time
-	CreatedAt            time.Time
-	UpdatedAt            time.Time
+	ID                               uuid.UUID `gorm:"type:uuid;primary_key;default:gen_random_uuid()"`
+	ReferenceNumber                  string    `gorm:"type:varchar(20);uniqueIndex;not null"`
+	CustomerID                       uuid.UUID `gorm:"type:uuid;not null;index:idx_customer_bookings"`
+	MaidID                           uuid.UUID `gorm:"type:uuid;not null;index:idx_maid_bookings"`
+	ServiceType                      string    `gorm:"type:varchar(50);not null"`
+	BookingDate                      time.Time `gorm:"type:date;not null"`
+	StartTime                        string    `gorm:"type:varchar(5);not null"` // HH:MM format
+	EndTime                          string    `gorm:"type:varchar(5);not null"`
+	DurationHours                    float64   `gorm:"type:decimal(4,2);not null"`
+	SpecialInstructions              string    `gorm:"type:text"`
+	BookingStatus                    string    `gorm:"type:varchar(30);default:'pending_maid';index:idx_booking_status"`
+	PaymentStatus                    string    `gorm:"type:varchar(30);default:'unpaid';index:idx_payment_status"`
+	ServiceStartedAt                 *time.Time
+	ServiceCompletedAt               *time.Time
+	MaidCurrentLat                   *float64 `gorm:"type:decimal(10,8)"`
+	MaidCurrentLng                   *float64 `gorm:"type:decimal(11,8)"`
+	MaidLocationUpdatedAt            *time.Time
+	PaymentCollectionTransactionID   *string `gorm:"type:text"`
+	PaymentDisbursementTransactionID *string `gorm:"type:text"`
+	CreatedAt                        time.Time
+	UpdatedAt                        time.Time
 }
 
 type BookingLocation struct {
-	ID                   uuid.UUID  `gorm:"type:uuid;primary_key;default:gen_random_uuid()"`
-	BookingID            uuid.UUID  `gorm:"type:uuid;not null;uniqueIndex"`
-	CustomerAddress      string     `gorm:"type:text;not null"`
-	CustomerLocationLat  float64    `gorm:"type:decimal(10,8);not null"`
-	CustomerLocationLng  float64    `gorm:"type:decimal(11,8);not null"`
-	District             string     `gorm:"type:varchar(50)"`
-	Ward                 string     `gorm:"type:varchar(50)"`
-	ArrivalVerifiedLat   *float64   `gorm:"type:decimal(10,8)"`
-	ArrivalVerifiedLng   *float64   `gorm:"type:decimal(11,8)"`
-	ArrivalVerifiedAt    *time.Time
+	ID                  uuid.UUID `gorm:"type:uuid;primary_key;default:gen_random_uuid()"`
+	BookingID           uuid.UUID `gorm:"type:uuid;not null;uniqueIndex"`
+	CustomerAddress     string    `gorm:"type:text;not null"`
+	CustomerLocationLat float64   `gorm:"type:decimal(10,8);not null"`
+	CustomerLocationLng float64   `gorm:"type:decimal(11,8);not null"`
+	District            string    `gorm:"type:varchar(50)"`
+	Ward                string    `gorm:"type:varchar(50)"`
+	ArrivalVerifiedLat  *float64  `gorm:"type:decimal(10,8)"`
+	ArrivalVerifiedLng  *float64  `gorm:"type:decimal(11,8)"`
+	ArrivalVerifiedAt   *time.Time
 }
 
 type BookingPricing struct {
@@ -65,19 +67,19 @@ type BookingTimeline struct {
 }
 
 type Payment struct {
-	ID                    uuid.UUID `gorm:"type:uuid;primary_key;default:gen_random_uuid()"`
-	BookingID             uuid.UUID `gorm:"type:uuid;not null;index:idx_payment_booking"`
-	UserID                uuid.UUID `gorm:"type:uuid;not null"`
-	TransactionType       string    `gorm:"type:varchar(20);not null"` // booking_payment, contract_payment, withdrawal
-	Amount                int       `gorm:"not null"`
-	Provider              string    `gorm:"type:varchar(20)"` // Mpesa, TigoPesa, AirtelMoney, Halopesa
-	AccountNumber         string    `gorm:"type:varchar(20)"`
-	Status                string    `gorm:"type:varchar(20);default:'pending'"`
-	AzampayTransactionID  string    `gorm:"type:varchar(100);uniqueIndex"`
-	AzampayReference      string    `gorm:"type:varchar(100)"`
-	FailureReason         string    `gorm:"type:text"`
-	InitiatedAt           time.Time `gorm:"default:now()"`
-	CompletedAt           *time.Time
+	ID                   uuid.UUID `gorm:"type:uuid;primary_key;default:gen_random_uuid()"`
+	BookingID            uuid.UUID `gorm:"type:uuid;not null;index:idx_payment_booking"`
+	UserID               uuid.UUID `gorm:"type:uuid;not null"`
+	TransactionType      string    `gorm:"type:varchar(20);not null"` // booking_payment, contract_payment, withdrawal
+	Amount               int       `gorm:"not null"`
+	Provider             string    `gorm:"type:varchar(20)"` // Mpesa, TigoPesa, AirtelMoney, Halopesa
+	AccountNumber        string    `gorm:"type:varchar(20)"`
+	Status               string    `gorm:"type:varchar(20);default:'pending'"`
+	AzampayTransactionID string    `gorm:"type:varchar(100);uniqueIndex"`
+	AzampayReference     string    `gorm:"type:varchar(100)"`
+	FailureReason        string    `gorm:"type:text"`
+	InitiatedAt          time.Time `gorm:"default:now()"`
+	CompletedAt          *time.Time
 }
 
 func (b *Booking) BeforeCreate(tx *gorm.DB) error {

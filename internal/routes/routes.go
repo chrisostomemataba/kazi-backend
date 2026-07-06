@@ -5,24 +5,26 @@ import (
 	"kazi-backend/internal/auth"
 	"kazi-backend/internal/booking"
 	"kazi-backend/internal/common/middleware"
+	"kazi-backend/internal/customer"
 	"kazi-backend/internal/maid"
 	"kazi-backend/internal/notification"
+	"kazi-backend/internal/payment"
 	"kazi-backend/internal/review"
-	"kazi-backend/internal/customer"
 
 	"github.com/gofiber/fiber/v2"
 	"github.com/gofiber/websocket/v2"
 )
 
 type Handlers struct {
-	Auth         *auth.Handler
-	Maid         *maid.Handler
-	Customer     *customer.Handler
-	Booking      *booking.Handler
-	Review       *review.Handler
-	Admin        *admin.Handler
-	Notification *notification.Handler
-	WebSocket    *notification.WebSocketHandler
+	Auth           *auth.Handler
+	Maid           *maid.Handler
+	Customer       *customer.Handler
+	Booking        *booking.Handler
+	Review         *review.Handler
+	Admin          *admin.Handler
+	Notification   *notification.Handler
+	WebSocket      *notification.WebSocketHandler
+	PaymentWebhook *payment.WebhookHandler
 }
 
 func Register(app *fiber.App, h Handlers, jwtSecret string) {
@@ -40,6 +42,8 @@ func Register(app *fiber.App, h Handlers, jwtSecret string) {
 	registerNotificationRoutes(api, h.Notification, jwtSecret)
 	registerAdminRoutes(api, h.Admin, jwtSecret)
 	registerWebSocketRoute(app, h.WebSocket)
+
+	app.Post("/internal/payment-webhook", h.PaymentWebhook.HandleWebhook)
 }
 
 func registerAuthRoutes(api fiber.Router, h *auth.Handler) {
@@ -81,7 +85,7 @@ func registerBookingRoutes(api fiber.Router, h *booking.Handler, jwtSecret strin
 	customer.Post("/validate", middleware.RequireRole("customer"), h.ValidateBooking)
 	customer.Post("/create", middleware.RequireRole("customer"), h.CreateBooking)
 	customer.Get("/my-bookings", middleware.RequireRole("customer"), h.GetMyBookings)
-	customer.Get("/:id", middleware.RequireRole("customer"), h.GetBookingByID)     
+	customer.Get("/:id", middleware.RequireRole("customer"), h.GetBookingByID)
 	customer.Post("/:id/initiate-payment", middleware.RequireRole("customer"), h.InitiatePayment)
 	customer.Post("/:id/confirm", middleware.RequireRole("customer"), h.ConfirmCompletion)
 

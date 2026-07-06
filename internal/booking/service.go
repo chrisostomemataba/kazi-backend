@@ -8,10 +8,13 @@ import (
 	"math"
 	"time"
 
+	"strings"
+
 	"kazi-backend/internal/auth"
 	"kazi-backend/internal/customer"
 	"kazi-backend/internal/maid"
 	"kazi-backend/internal/notification"
+	"kazi-backend/internal/payment"
 
 	"github.com/google/uuid"
 	"gorm.io/gorm"
@@ -36,6 +39,7 @@ type Service struct {
 	maidRepo        *maid.Repository
 	customerRepo    *customer.Repository
 	notificationSvc *notification.Service
+	paymentClient   *payment.PaymentClient
 }
 
 func NewService(
@@ -44,6 +48,7 @@ func NewService(
 	maidRepo *maid.Repository,
 	customerRepo *customer.Repository,
 	notificationSvc *notification.Service,
+	paymentClient *payment.PaymentClient,
 ) *Service {
 	return &Service{
 		repo:            repo,
@@ -51,6 +56,7 @@ func NewService(
 		maidRepo:        maidRepo,
 		customerRepo:    customerRepo,
 		notificationSvc: notificationSvc,
+		paymentClient:   paymentClient,
 	}
 }
 
@@ -355,52 +361,123 @@ func (s *Service) InitiatePayment(ctx context.Context, customerID uuid.UUID, boo
 		return nil, fmt.Errorf("get pricing: %w", err)
 	}
 
-	// DEV MODE: auto-success. Replace this block with AzamPay API call.
-	completedAt := time.Now()
-	payment := &Payment{
-		BookingID:            bookingUUID,
-		UserID:               customerID,
-		TransactionType:      "booking_payment",
-		Amount:               pricing.TotalAmount,
-		Provider:             req.Provider,
-		AccountNumber:        req.PhoneNumber,
-		Status:               "success",
-		AzampayTransactionID: fmt.Sprintf("DEV_%s_%d", bookingID[:8], time.Now().Unix()),
-		AzampayReference:     fmt.Sprintf("REF_%s", bookingID[:8]),
-		CompletedAt:          &completedAt,
+	customerUser, err := s.authRepo.FindUserByID(ctx, customerID)
+	if err != nil {
+		return nil, fmt.Errorf("get customer: %w", err)
+	}
+	firstName, lastName := splitFullName(customerUser.FullName)
+
+	transactionID, err := s.paymentClient.CollectFromCustomer(
+		req.PhoneNumber,
+		pricing.TotalAmount,
+		firstName,
+		lastName,
+		"",
+		map[string]interface{}{"booking_id": bookingUUID.String()},
+	)
+	if err != nil {
+		return nil, errors.New("payment initiation failed")
 	}
 
-	if err := s.repo.CreatePayment(ctx, payment); err != nil {
-		return nil, fmt.Errorf("create payment: %w", err)
+	if err := s.repo.UpdateBookingPaymentCollectionTxID(ctx, bookingUUID, transactionID); err != nil {
+		return nil, fmt.Errorf("store transaction id: %w", err)
 	}
 
-	if err := s.repo.UpdatePaymentStatus(ctx, bookingUUID, "paid_held_escrow"); err != nil {
+	if err := s.repo.UpdatePaymentStatus(ctx, bookingUUID, "collection_pending"); err != nil {
 		return nil, fmt.Errorf("update payment status: %w", err)
 	}
 
-	if err := s.repo.UpdateBookingStatus(ctx, bookingUUID, "confirmed"); err != nil {
-		return nil, fmt.Errorf("update booking status: %w", err)
-	}
-
-	s.repo.AddTimelineEvent(ctx, &BookingTimeline{
-		BookingID:      bookingUUID,
-		EventType:      "payment_confirmed",
-		EventTimestamp: time.Now(),
-		TriggeredBy:    &customerID,
-		Notes:          fmt.Sprintf("Payment via %s (DEV MODE)", req.Provider),
-	})
-
-	// Notify both parties
-	s.notificationSvc.NotifyMaidBookingConfirmed(ctx, booking.MaidID, booking.ReferenceNumber)
-	s.notificationSvc.NotifyCustomerPaymentConfirmed(ctx, customerID, booking.ReferenceNumber)
-
-	log.Printf("[Payment] DEV: %s paid, status → confirmed", booking.ReferenceNumber)
+	log.Printf("[Payment] %s collection initiated, transaction %s", booking.ReferenceNumber, transactionID)
 
 	return &PaymentResponse{
 		PaymentInitiated: true,
-		TransactionID:    payment.AzampayTransactionID,
-		Message:          "Malipo yamekamilika",
+		TransactionID:    transactionID,
+		Message:          "Malipo yanaendelea",
 	}, nil
+}
+
+// ── Payment webhook events (invoked via payment.WebhookEventHandler) ─────────
+
+func (s *Service) HandlePaymentCompleted(ctx context.Context, transactionID string) error {
+	booking, err := s.repo.GetBookingByCollectionTransactionID(ctx, transactionID)
+	if err != nil {
+		return fmt.Errorf("find booking by collection transaction: %w", err)
+	}
+
+	pricing, err := s.repo.GetBookingPricing(ctx, booking.ID)
+	if err != nil {
+		return fmt.Errorf("get pricing: %w", err)
+	}
+
+	if _, err := s.paymentClient.HoldEscrow(
+		transactionID,
+		booking.ReferenceNumber,
+		pricing.TotalAmount,
+		map[string]interface{}{"booking_id": booking.ID.String()},
+	); err != nil {
+		return fmt.Errorf("hold escrow: %w", err)
+	}
+
+	if err := s.repo.UpdatePaymentStatus(ctx, booking.ID, "paid_held_escrow"); err != nil {
+		return fmt.Errorf("update payment status: %w", err)
+	}
+
+	if err := s.repo.UpdateBookingStatus(ctx, booking.ID, "confirmed"); err != nil {
+		return fmt.Errorf("update booking status: %w", err)
+	}
+
+	s.notificationSvc.NotifyMaidBookingConfirmed(ctx, booking.MaidID, booking.ReferenceNumber)
+
+	log.Printf("[Payment] Webhook: escrow held, %s → confirmed", booking.ReferenceNumber)
+
+	return nil
+}
+
+func (s *Service) HandlePayoutCompleted(ctx context.Context, transactionID string) error {
+	booking, err := s.repo.GetBookingByDisbursementTransactionID(ctx, transactionID)
+	if err != nil {
+		return fmt.Errorf("find booking by disbursement transaction: %w", err)
+	}
+
+	if err := s.repo.UpdatePaymentStatus(ctx, booking.ID, "released_to_maid"); err != nil {
+		return fmt.Errorf("update payment status: %w", err)
+	}
+
+	pricing, err := s.repo.GetBookingPricing(ctx, booking.ID)
+	if err != nil {
+		return fmt.Errorf("get pricing: %w", err)
+	}
+
+	if err := s.repo.CreditMaidWallet(ctx, booking.MaidID, pricing.MaidPayoutAmount, booking.ID); err != nil {
+		log.Printf("[Payment] Warning: credit maid wallet failed for %s: %v", booking.ReferenceNumber, err)
+	}
+
+	s.notificationSvc.NotifyMaidPaymentReleased(ctx, booking.MaidID, pricing.MaidPayoutAmount, booking.ReferenceNumber)
+
+	log.Printf("[Payment] Webhook: payout completed for %s", booking.ReferenceNumber)
+
+	return nil
+}
+
+func (s *Service) HandlePaymentFailed(ctx context.Context, transactionID string) error {
+	booking, err := s.repo.GetBookingByCollectionTransactionID(ctx, transactionID)
+	if err != nil {
+		return fmt.Errorf("find booking by collection transaction: %w", err)
+	}
+
+	if err := s.repo.UpdatePaymentStatus(ctx, booking.ID, "failed"); err != nil {
+		return fmt.Errorf("update payment status: %w", err)
+	}
+
+	if err := s.repo.UpdateBookingStatus(ctx, booking.ID, "cancelled_payment_failed"); err != nil {
+		return fmt.Errorf("update booking status: %w", err)
+	}
+
+	s.notificationSvc.NotifyCustomerPaymentFailed(ctx, booking.CustomerID, booking.ReferenceNumber)
+
+	log.Printf("[Payment] Webhook: payment failed for %s", booking.ReferenceNumber)
+
+	return nil
 }
 
 // ── Workflow E1: Maid marks arrival ──────────────────────────────────────────
@@ -562,32 +639,37 @@ func (s *Service) releaseEscrowPayment(ctx context.Context, booking *Booking, pr
 		return errors.New("pricing not found for escrow release")
 	}
 
-	// Use DB transaction — all or nothing
-	return s.repo.WithTransaction(ctx, func(txCtx context.Context) error {
-		if err := s.repo.UpdatePaymentStatusTx(txCtx, booking.ID, "released_to_maid"); err != nil {
-			return fmt.Errorf("update payment status: %w", err)
-		}
+	if booking.PaymentCollectionTransactionID == nil || *booking.PaymentCollectionTransactionID == "" {
+		return errors.New("no collection transaction found for escrow release")
+	}
 
-		if err := s.repo.CreditMaidWallet(txCtx, booking.MaidID, pricing.MaidPayoutAmount, booking.ID); err != nil {
-			return fmt.Errorf("credit maid wallet: %w", err)
-		}
+	maidUser, err := s.authRepo.FindUserByID(ctx, booking.MaidID)
+	if err != nil {
+		return fmt.Errorf("get maid: %w", err)
+	}
 
-		maidSystemID := booking.ID // use booking ID as trigger reference
-		s.repo.AddTimelineEventTx(txCtx, &BookingTimeline{
-			BookingID:      booking.ID,
-			EventType:      "payment_released",
-			EventTimestamp: time.Now(),
-			TriggeredBy:    &maidSystemID,
-			Notes:          fmt.Sprintf("TZS %d released to maid wallet", pricing.MaidPayoutAmount),
-		})
-
-		s.notificationSvc.NotifyMaidPaymentReleased(ctx, booking.MaidID, pricing.MaidPayoutAmount, booking.ReferenceNumber)
-
-		log.Printf("[Payment] Escrow released: TZS %d → maid %s for booking %s",
-			pricing.MaidPayoutAmount, booking.MaidID, booking.ReferenceNumber)
-
+	disbursementTransactionID, err := s.paymentClient.ReleaseEscrow(
+		*booking.PaymentCollectionTransactionID,
+		maidUser.PhoneNumber,
+		maidUser.FullName,
+		"Job payment "+booking.ReferenceNumber,
+	)
+	if err != nil {
+		log.Printf("[Payment] Warning: escrow release failed for %s: %v", booking.ReferenceNumber, err)
 		return nil
-	})
+	}
+
+	if err := s.repo.UpdateBookingPaymentDisbursementTxID(ctx, booking.ID, disbursementTransactionID); err != nil {
+		return fmt.Errorf("store disbursement transaction id: %w", err)
+	}
+
+	if err := s.repo.UpdatePaymentStatus(ctx, booking.ID, "disbursement_pending"); err != nil {
+		return fmt.Errorf("update payment status: %w", err)
+	}
+
+	log.Printf("[Payment] Escrow release initiated for %s, transaction %s", booking.ReferenceNumber, disbursementTransactionID)
+
+	return nil
 }
 
 // ── Maid: get their booking requests ─────────────────────────────────────────
@@ -817,6 +899,17 @@ func (s *Service) MaidLocationForCustomer(ctx context.Context, bookingID, caller
 		DistanceKm: math.Round(dist*100) / 100,
 		ETAMinutes: eta,
 	}, nil
+}
+
+func splitFullName(fullName string) (firstName, lastName string) {
+	parts := strings.Fields(fullName)
+	if len(parts) == 0 {
+		return "", ""
+	}
+	if len(parts) == 1 {
+		return parts[0], ""
+	}
+	return parts[0], strings.Join(parts[1:], " ")
 }
 
 func haversineKm(lat1, lng1, lat2, lng2 float64) float64 {
