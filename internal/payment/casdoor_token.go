@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"log/slog"
 	"net/http"
 	"net/url"
 	"os"
@@ -37,10 +38,15 @@ func GetPaymentServiceToken() (string, error) {
 		return currentToken.accessToken, nil
 	}
 
+	slog.Info("casdoor: cached token missing or expired, fetching a new one")
+
 	token, err := fetchCasdoorToken()
 	if err != nil {
+		slog.Error("casdoor: could not fetch machine-to-machine token", "error", err)
 		return "", err
 	}
+
+	slog.Info("casdoor: new token cached", "expires_at", token.expiresAt.Format(time.RFC3339))
 
 	currentToken = token
 	return token.accessToken, nil

@@ -4,7 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"log"
+	"log/slog"
 	"math"
 	"time"
 
@@ -226,10 +226,17 @@ func (s *Service) CreateBooking(ctx context.Context, customerID uuid.UUID, req *
 	}
 
 	if err := s.notificationSvc.NotifyMaidNewBooking(ctx, maidUUID, booking.ReferenceNumber, customerName); err != nil {
-		log.Printf("[Booking] Warning: notification failed: %v", err)
+		slog.Warn("booking: maid was not notified about the new request",
+			"booking_reference", booking.ReferenceNumber,
+			"error", err)
 	}
 
-	log.Printf("[Booking] Created %s for customer %s → maid %s", booking.ReferenceNumber, customerID, maidUUID)
+	slog.Info("booking: new booking created, waiting for maid to accept",
+		"booking_reference", booking.ReferenceNumber,
+		"customer_id", customerID.String(),
+		"maid_id", maidUUID.String(),
+		"service_type", booking.ServiceType,
+		"total_tzs", total)
 
 	return s.buildBookingResponse(ctx, booking, location, pricing, nil)
 }
@@ -255,6 +262,17 @@ func (s *Service) AcceptBooking(ctx context.Context, maidID uuid.UUID, bookingID
 		return nil, fmt.Errorf("cannot accept booking in status: %s", booking.BookingStatus)
 	}
 
+	slotFree, err := s.repo.CheckMaidSlotFreeForAccept(ctx, maidID, booking.BookingDate, booking.StartTime, booking.EndTime, bookingUUID)
+	if err != nil {
+		return nil, fmt.Errorf("check slot availability: %w", err)
+	}
+	if !slotFree {
+		slog.Warn("booking: maid tried to accept an overlapping booking",
+			"booking_reference", booking.ReferenceNumber,
+			"maid_id", maidID.String())
+		return nil, errors.New("umeshakubali kazi nyingine kwa muda huu — you already have another booking at this time")
+	}
+
 	if err := s.repo.UpdateBookingStatus(ctx, bookingUUID, "maid_accepted"); err != nil {
 		return nil, fmt.Errorf("update status: %w", err)
 	}
@@ -276,7 +294,9 @@ func (s *Service) AcceptBooking(ctx context.Context, maidID uuid.UUID, bookingID
 
 	s.notificationSvc.NotifyCustomerMaidAccepted(ctx, booking.CustomerID, maidName, booking.ReferenceNumber)
 
-	log.Printf("[Booking] %s accepted by maid %s", booking.ReferenceNumber, maidID)
+	slog.Info("booking: maid accepted, customer can now pay",
+		"booking_reference", booking.ReferenceNumber,
+		"maid_id", maidID.String())
 
 	booking.BookingStatus = "maid_accepted"
 	location, _ := s.repo.GetBookingLocation(ctx, bookingUUID)
@@ -325,12 +345,15 @@ func (s *Service) DeclineBooking(ctx context.Context, maidID uuid.UUID, bookingI
 
 	s.notificationSvc.NotifyCustomerMaidDeclined(ctx, booking.CustomerID, maidName, booking.ReferenceNumber)
 
-	log.Printf("[Booking] %s declined by maid %s", booking.ReferenceNumber, maidID)
+	slog.Info("booking: maid declined the request",
+		"booking_reference", booking.ReferenceNumber,
+		"maid_id", maidID.String(),
+		"reason", reason)
 
 	return nil
 }
 
-// ── Workflow D: Payment (dev mode auto-success, replace with AzamPay later) ──
+// ── Workflow D: Payment via payment microservice (Snippe) ────────────────────
 
 func (s *Service) InitiatePayment(ctx context.Context, customerID uuid.UUID, bookingID string, req *InitiatePaymentRequest) (*PaymentResponse, error) {
 	bookingUUID, err := uuid.Parse(bookingID)
@@ -365,6 +388,25 @@ func (s *Service) InitiatePayment(ctx context.Context, customerID uuid.UUID, boo
 	if err != nil {
 		return nil, fmt.Errorf("get customer: %w", err)
 	}
+
+	paymentMethod := req.PaymentMethod
+	if paymentMethod == "" {
+		paymentMethod = "mobile"
+	}
+
+	slog.Info("payment: customer is initiating payment",
+		"booking_reference", booking.ReferenceNumber,
+		"payment_method", paymentMethod,
+		"amount_tzs", pricing.TotalAmount)
+
+	if paymentMethod == "card" {
+		return s.initiateCardPayment(ctx, booking, pricing, customerUser.PhoneNumber, req)
+	}
+
+	if req.Provider == "" {
+		return nil, errors.New("provider is required for mobile money payment")
+	}
+
 	firstName, lastName := splitFullName(customerUser.FullName)
 
 	transactionID, err := s.paymentClient.CollectFromCustomer(
@@ -376,6 +418,9 @@ func (s *Service) InitiatePayment(ctx context.Context, customerID uuid.UUID, boo
 		map[string]interface{}{"booking_id": bookingUUID.String()},
 	)
 	if err != nil {
+		slog.Error("payment: mobile money collection could not be started",
+			"booking_reference", booking.ReferenceNumber,
+			"error", err)
 		return nil, errors.New("payment initiation failed")
 	}
 
@@ -387,12 +432,97 @@ func (s *Service) InitiatePayment(ctx context.Context, customerID uuid.UUID, boo
 		return nil, fmt.Errorf("update payment status: %w", err)
 	}
 
-	log.Printf("[Payment] %s collection initiated, transaction %s", booking.ReferenceNumber, transactionID)
+	slog.Info("payment: mobile money collection started, waiting for customer PIN and webhook",
+		"booking_reference", booking.ReferenceNumber,
+		"transaction_id", transactionID)
 
 	return &PaymentResponse{
 		PaymentInitiated: true,
 		TransactionID:    transactionID,
 		Message:          "Malipo yanaendelea",
+	}, nil
+}
+
+// initiateCardPayment starts a hosted Snippe card checkout. The mobile app
+// must open the returned payment_url in a WebView or browser; completion
+// still arrives asynchronously via the payment.completed webhook.
+func (s *Service) initiateCardPayment(
+	ctx context.Context,
+	booking *Booking,
+	pricing *BookingPricing,
+	customerPhone string,
+	req *InitiatePaymentRequest,
+) (*PaymentResponse, error) {
+	billingAddress := req.BillingAddress
+	if billingAddress == "" {
+		billingAddress = "Dar es Salaam"
+	}
+	billingCity := req.BillingCity
+	if billingCity == "" {
+		billingCity = "Dar es Salaam"
+	}
+	billingState := req.BillingState
+	if billingState == "" {
+		billingState = "Dar es Salaam"
+	}
+	billingPostcode := req.BillingPostcode
+	if billingPostcode == "" {
+		billingPostcode = "00000"
+	}
+	billingCountry := req.BillingCountry
+	if billingCountry == "" {
+		billingCountry = "TZ"
+	}
+	redirectURL := req.RedirectURL
+	if redirectURL == "" {
+		redirectURL = "kazi://payment/success"
+	}
+	cancelURL := req.CancelURL
+	if cancelURL == "" {
+		cancelURL = "kazi://payment/cancel"
+	}
+
+	phoneNumber := req.PhoneNumber
+	if phoneNumber == "" {
+		phoneNumber = customerPhone
+	}
+
+	transactionID, paymentURL, err := s.paymentClient.CollectFromCustomerByCard(
+		phoneNumber,
+		pricing.TotalAmount,
+		billingAddress,
+		billingCity,
+		billingState,
+		billingPostcode,
+		billingCountry,
+		redirectURL,
+		cancelURL,
+		map[string]interface{}{"booking_id": booking.ID.String()},
+	)
+	if err != nil {
+		slog.Error("payment: card checkout could not be created",
+			"booking_reference", booking.ReferenceNumber,
+			"error", err)
+		return nil, errors.New("card payment initiation failed")
+	}
+
+	if err := s.repo.UpdateBookingPaymentCollectionTxID(ctx, booking.ID, transactionID); err != nil {
+		return nil, fmt.Errorf("store transaction id: %w", err)
+	}
+
+	if err := s.repo.UpdatePaymentStatus(ctx, booking.ID, "collection_pending"); err != nil {
+		return nil, fmt.Errorf("update payment status: %w", err)
+	}
+
+	slog.Info("payment: card checkout created, customer must complete it on the payment page",
+		"booking_reference", booking.ReferenceNumber,
+		"transaction_id", transactionID)
+
+	return &PaymentResponse{
+		PaymentInitiated: true,
+		TransactionID:    transactionID,
+		PaymentURL:       paymentURL,
+		Message:          "Fungua ukurasa wa malipo kukamilisha",
 	}, nil
 }
 
@@ -402,6 +532,14 @@ func (s *Service) HandlePaymentCompleted(ctx context.Context, transactionID stri
 	booking, err := s.repo.GetBookingByCollectionTransactionID(ctx, transactionID)
 	if err != nil {
 		return fmt.Errorf("find booking by collection transaction: %w", err)
+	}
+
+	// Webhook retries must not hold escrow twice.
+	if booking.PaymentStatus == "paid_held_escrow" || booking.PaymentStatus == "disbursement_pending" || booking.PaymentStatus == "released_to_maid" {
+		slog.Info("payment: duplicate payment.completed webhook ignored, booking is already paid",
+			"booking_reference", booking.ReferenceNumber,
+			"transaction_id", transactionID)
+		return nil
 	}
 
 	pricing, err := s.repo.GetBookingPricing(ctx, booking.ID)
@@ -428,7 +566,9 @@ func (s *Service) HandlePaymentCompleted(ctx context.Context, transactionID stri
 
 	s.notificationSvc.NotifyMaidBookingConfirmed(ctx, booking.MaidID, booking.ReferenceNumber)
 
-	log.Printf("[Payment] Webhook: escrow held, %s → confirmed", booking.ReferenceNumber)
+	slog.Info("payment: customer money received and held in escrow, booking is now confirmed",
+		"booking_reference", booking.ReferenceNumber,
+		"amount_tzs", pricing.TotalAmount)
 
 	return nil
 }
@@ -437,6 +577,14 @@ func (s *Service) HandlePayoutCompleted(ctx context.Context, transactionID strin
 	booking, err := s.repo.GetBookingByDisbursementTransactionID(ctx, transactionID)
 	if err != nil {
 		return fmt.Errorf("find booking by disbursement transaction: %w", err)
+	}
+
+	// Webhook retries must not credit the display wallet twice.
+	if booking.PaymentStatus == "released_to_maid" {
+		slog.Info("payment: duplicate payout.completed webhook ignored, maid was already paid",
+			"booking_reference", booking.ReferenceNumber,
+			"transaction_id", transactionID)
+		return nil
 	}
 
 	if err := s.repo.UpdatePaymentStatus(ctx, booking.ID, "released_to_maid"); err != nil {
@@ -449,12 +597,19 @@ func (s *Service) HandlePayoutCompleted(ctx context.Context, transactionID strin
 	}
 
 	if err := s.repo.CreditMaidWallet(ctx, booking.MaidID, pricing.MaidPayoutAmount, booking.ID); err != nil {
-		log.Printf("[Payment] Warning: credit maid wallet failed for %s: %v", booking.ReferenceNumber, err)
+		slog.Warn("payment: maid wallet display balance was not updated — money already sent by Snippe, fix the wallet row manually",
+			"booking_reference", booking.ReferenceNumber,
+			"maid_id", booking.MaidID.String(),
+			"amount_tzs", pricing.MaidPayoutAmount,
+			"error", err)
 	}
 
 	s.notificationSvc.NotifyMaidPaymentReleased(ctx, booking.MaidID, pricing.MaidPayoutAmount, booking.ReferenceNumber)
 
-	log.Printf("[Payment] Webhook: payout completed for %s", booking.ReferenceNumber)
+	slog.Info("payment: payout confirmed, maid has been paid on her phone",
+		"booking_reference", booking.ReferenceNumber,
+		"maid_id", booking.MaidID.String(),
+		"amount_tzs", pricing.MaidPayoutAmount)
 
 	return nil
 }
@@ -463,6 +618,20 @@ func (s *Service) HandlePaymentFailed(ctx context.Context, transactionID string)
 	booking, err := s.repo.GetBookingByCollectionTransactionID(ctx, transactionID)
 	if err != nil {
 		return fmt.Errorf("find booking by collection transaction: %w", err)
+	}
+
+	// A late failure webhook must never undo a payment that already succeeded.
+	if booking.PaymentStatus == "paid_held_escrow" || booking.PaymentStatus == "disbursement_pending" || booking.PaymentStatus == "released_to_maid" {
+		slog.Warn("payment: payment.failed webhook arrived for a booking that is already paid, ignoring it",
+			"booking_reference", booking.ReferenceNumber,
+			"transaction_id", transactionID)
+		return nil
+	}
+	if booking.PaymentStatus == "failed" {
+		slog.Info("payment: duplicate payment.failed webhook ignored",
+			"booking_reference", booking.ReferenceNumber,
+			"transaction_id", transactionID)
+		return nil
 	}
 
 	if err := s.repo.UpdatePaymentStatus(ctx, booking.ID, "failed"); err != nil {
@@ -475,7 +644,9 @@ func (s *Service) HandlePaymentFailed(ctx context.Context, transactionID string)
 
 	s.notificationSvc.NotifyCustomerPaymentFailed(ctx, booking.CustomerID, booking.ReferenceNumber)
 
-	log.Printf("[Payment] Webhook: payment failed for %s", booking.ReferenceNumber)
+	slog.Warn("payment: customer payment failed, booking was cancelled",
+		"booking_reference", booking.ReferenceNumber,
+		"customer_id", booking.CustomerID.String())
 
 	return nil
 }
@@ -527,7 +698,9 @@ func (s *Service) MarkArrival(ctx context.Context, maidID uuid.UUID, bookingID s
 
 	s.notificationSvc.NotifyCustomerMaidArrived(ctx, booking.CustomerID, maidName)
 
-	log.Printf("[Booking] %s → in_progress, maid arrived", booking.ReferenceNumber)
+	slog.Info("booking: maid arrived at the customer, work has started",
+		"booking_reference", booking.ReferenceNumber,
+		"maid_id", maidID.String())
 
 	booking.BookingStatus = "in_progress"
 	location, _ := s.repo.GetBookingLocation(ctx, bookingUUID)
@@ -577,7 +750,9 @@ func (s *Service) MarkComplete(ctx context.Context, maidID uuid.UUID, bookingID 
 
 	s.notificationSvc.NotifyCustomerWorkComplete(ctx, booking.CustomerID, maidName, booking.ReferenceNumber)
 
-	log.Printf("[Booking] %s marked complete by maid, awaiting customer confirm", booking.ReferenceNumber)
+	slog.Info("booking: maid finished the work, waiting for the customer to confirm",
+		"booking_reference", booking.ReferenceNumber,
+		"maid_id", maidID.String())
 
 	booking.BookingStatus = "in_progress"
 	location, _ := s.repo.GetBookingLocation(ctx, bookingUUID)
@@ -624,10 +799,14 @@ func (s *Service) ConfirmCompletion(ctx context.Context, customerID uuid.UUID, b
 
 	// Trigger Workflow F: release payment to maid
 	if err := s.releaseEscrowPayment(ctx, booking, pricing); err != nil {
-		log.Printf("[Payment] Warning: escrow release failed for %s: %v", booking.ReferenceNumber, err)
+		slog.Error("payment: escrow release did not go through, maid payout is stuck — needs retry or manual action",
+			"booking_reference", booking.ReferenceNumber,
+			"error", err)
 	}
 
-	log.Printf("[Booking] %s completed and confirmed by customer", booking.ReferenceNumber)
+	slog.Info("booking: customer confirmed completion, booking is done",
+		"booking_reference", booking.ReferenceNumber,
+		"customer_id", customerID.String())
 
 	return s.buildBookingResponse(ctx, booking, location, pricing, nil)
 }
@@ -655,8 +834,7 @@ func (s *Service) releaseEscrowPayment(ctx context.Context, booking *Booking, pr
 		"Job payment "+booking.ReferenceNumber,
 	)
 	if err != nil {
-		log.Printf("[Payment] Warning: escrow release failed for %s: %v", booking.ReferenceNumber, err)
-		return nil
+		return fmt.Errorf("release escrow via payment service: %w", err)
 	}
 
 	if err := s.repo.UpdateBookingPaymentDisbursementTxID(ctx, booking.ID, disbursementTransactionID); err != nil {
@@ -667,7 +845,10 @@ func (s *Service) releaseEscrowPayment(ctx context.Context, booking *Booking, pr
 		return fmt.Errorf("update payment status: %w", err)
 	}
 
-	log.Printf("[Payment] Escrow release initiated for %s, transaction %s", booking.ReferenceNumber, disbursementTransactionID)
+	slog.Info("payment: escrow release started, money is on its way to the maid",
+		"booking_reference", booking.ReferenceNumber,
+		"disbursement_transaction_id", disbursementTransactionID,
+		"maid_payout_tzs", pricing.MaidPayoutAmount)
 
 	return nil
 }
@@ -686,7 +867,9 @@ func (s *Service) GetMaidBookings(ctx context.Context, maidID uuid.UUID, status 
 		pricing, _ := s.repo.GetBookingPricing(ctx, booking.ID)
 		resp, err := s.buildBookingResponse(ctx, &booking, location, pricing, nil)
 		if err != nil {
-			log.Printf("[Booking] Warning: build response failed for %s: %v", booking.ID, err)
+			slog.Warn("booking: skipped one booking in the list because its response could not be built",
+				"booking_id", booking.ID.String(),
+				"error", err)
 			continue
 		}
 		responses = append(responses, *resp)
@@ -709,7 +892,9 @@ func (s *Service) GetCustomerBookings(ctx context.Context, customerID uuid.UUID,
 		pricing, _ := s.repo.GetBookingPricing(ctx, booking.ID)
 		resp, err := s.buildBookingResponse(ctx, &booking, location, pricing, nil)
 		if err != nil {
-			log.Printf("[Booking] Warning: build response failed for %s: %v", booking.ID, err)
+			slog.Warn("booking: skipped one booking in the list because its response could not be built",
+				"booking_id", booking.ID.String(),
+				"error", err)
 			continue
 		}
 		responses = append(responses, *resp)
