@@ -86,6 +86,48 @@ func (r *Repository) CheckMaidAvailability(ctx context.Context, maidID uuid.UUID
 	return count == 0, nil
 }
 
+// CheckMaidSlotFreeForAccept guards against a maid accepting two overlapping
+// requests: it blocks when another booking for the same date/time window is
+// already accepted, paid, or running.
+func (r *Repository) CheckMaidSlotFreeForAccept(ctx context.Context, maidID uuid.UUID, bookingDate time.Time, startTime, endTime string, excludeBookingID uuid.UUID) (bool, error) {
+	var count int64
+	err := r.db.WithContext(ctx).
+		Model(&Booking{}).
+		Where("maid_id = ?", maidID).
+		Where("booking_date = ?", bookingDate).
+		Where("id != ?", excludeBookingID).
+		Where("booking_status IN ?", []string{"maid_accepted", "confirmed", "in_progress"}).
+		Where("start_time < ? AND end_time > ?", endTime, startTime).
+		Count(&count).Error
+	if err != nil {
+		return false, err
+	}
+	return count == 0, nil
+}
+
+// FindStaleCollectionPending returns bookings whose customer started a payment
+// but no webhook (success or failure) ever arrived before the cutoff.
+func (r *Repository) FindStaleCollectionPending(ctx context.Context, cutoff time.Time) ([]Booking, error) {
+	var bookings []Booking
+	err := r.db.WithContext(ctx).
+		Where("payment_status = ?", "collection_pending").
+		Where("updated_at < ?", cutoff).
+		Find(&bookings).Error
+	return bookings, err
+}
+
+// FindUnconfirmedCompleted returns in-progress bookings the maid marked done
+// but the customer never confirmed before the cutoff.
+func (r *Repository) FindUnconfirmedCompleted(ctx context.Context, cutoff time.Time) ([]Booking, error) {
+	var bookings []Booking
+	err := r.db.WithContext(ctx).
+		Where("booking_status = ?", "in_progress").
+		Where("service_completed_at IS NOT NULL").
+		Where("service_completed_at < ?", cutoff).
+		Find(&bookings).Error
+	return bookings, err
+}
+
 func (r *Repository) UpdateBookingStatus(ctx context.Context, bookingID uuid.UUID, status string) error {
 	return r.db.WithContext(ctx).
 		Model(&Booking{}).

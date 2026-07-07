@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"log/slog"
 	"os"
 
@@ -91,6 +92,9 @@ func main() {
 	paymentWebhookHandler := payment.NewWebhookHandler(bookingModule.Service, cfg.PaymentWebhookSecret)
 	reviewModule := review.NewModule(db, authModule.Repository, bookingModule.Repository)
 	adminModule := admin.NewModule(db, minioService, notifModule.Service, cfg.JWTSecret)
+
+	// Lifecycle safety nets: lost-webhook recovery, payment expiry, 24h auto-confirm
+	go bookingModule.Service.StartBackgroundJobs(context.Background())
 
 	app := fiber.New(fiber.Config{
 		ErrorHandler: errorHandler,

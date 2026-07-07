@@ -2,7 +2,7 @@ package payment
 
 import (
 	"context"
-	"log"
+	"log/slog"
 	"net/http"
 
 	"kazi-backend/internal/common/util"
@@ -38,17 +38,29 @@ type webhookPayload struct {
 
 func (h *WebhookHandler) HandleWebhook(c *fiber.Ctx) error {
 	if h.sharedSecret == "" || c.Get("X-Webhook-Secret") != h.sharedSecret {
+		slog.Warn("payment webhook: rejected request with missing or wrong shared secret",
+			"remote_ip", c.IP())
 		return util.ErrorResponse(c, http.StatusUnauthorized, "invalid webhook secret")
 	}
 
 	var payload webhookPayload
 	if err := c.BodyParser(&payload); err != nil {
+		slog.Warn("payment webhook: body could not be parsed",
+			"error", err,
+			"raw_body", string(c.Body()))
 		return util.ValidationErrorResponse(c, "invalid webhook payload")
 	}
 
 	if payload.TransactionID == "" || payload.EventType == "" {
+		slog.Warn("payment webhook: payload missing transaction_id or event_type",
+			"event_type", payload.EventType,
+			"transaction_id", payload.TransactionID)
 		return util.ValidationErrorResponse(c, "transaction_id and event_type are required")
 	}
+
+	slog.Info("payment webhook: event received",
+		"event_type", payload.EventType,
+		"transaction_id", payload.TransactionID)
 
 	ctx := c.Context()
 
@@ -61,14 +73,23 @@ func (h *WebhookHandler) HandleWebhook(c *fiber.Ctx) error {
 	case "payment.failed":
 		err = h.events.HandlePaymentFailed(ctx, payload.TransactionID)
 	default:
-		log.Printf("[PaymentWebhook] Ignoring unknown event_type: %s", payload.EventType)
+		slog.Info("payment webhook: ignoring event type we don't handle",
+			"event_type", payload.EventType,
+			"transaction_id", payload.TransactionID)
 		return util.SuccessResponse(c, nil, "ignored")
 	}
 
 	if err != nil {
-		log.Printf("[PaymentWebhook] %s handling failed: %v", payload.EventType, err)
+		slog.Error("payment webhook: event processing failed",
+			"event_type", payload.EventType,
+			"transaction_id", payload.TransactionID,
+			"error", err)
 		return util.ErrorResponse(c, http.StatusInternalServerError, "failed to process webhook")
 	}
+
+	slog.Info("payment webhook: event processed successfully",
+		"event_type", payload.EventType,
+		"transaction_id", payload.TransactionID)
 
 	return util.SuccessResponse(c, nil, "processed")
 }

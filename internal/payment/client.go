@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"log/slog"
 	"net/http"
 	"time"
 )
@@ -95,6 +96,10 @@ func (c *PaymentClient) CollectFromCustomer(
 	customerEmail string,
 	metadata map[string]interface{},
 ) (string, error) {
+	slog.Info("payment service: initiating mobile money collection",
+		"amount_tzs", amount,
+		"customer_name", customerFirstname+" "+customerLastname)
+
 	resp, err := c.doRequest(http.MethodPost, "/v1/collect/mobile", collectFromCustomerRequest{
 		PhoneNumber:       phoneNumber,
 		Amount:            amount,
@@ -104,15 +109,94 @@ func (c *PaymentClient) CollectFromCustomer(
 		Metadata:          metadata,
 	})
 	if err != nil {
+		slog.Error("payment service: mobile collection request failed", "error", err)
 		return "", err
 	}
 
 	var out collectFromCustomerResponse
 	if err := decodeJSONResponse(resp, &out); err != nil {
+		slog.Error("payment service: mobile collection response invalid", "error", err)
 		return "", err
 	}
 
+	slog.Info("payment service: mobile collection accepted, waiting for customer PIN",
+		"transaction_id", out.TransactionID)
+
 	return out.TransactionID, nil
+}
+
+type collectFromCustomerByCardRequest struct {
+	PhoneNumber     string                 `json:"phone_number"`
+	Amount          int                    `json:"amount"`
+	BillingAddress  string                 `json:"billing_address"`
+	BillingCity     string                 `json:"billing_city"`
+	BillingState    string                 `json:"billing_state"`
+	BillingPostcode string                 `json:"billing_postcode"`
+	BillingCountry  string                 `json:"billing_country"`
+	RedirectURL     string                 `json:"redirect_url"`
+	CancelURL       string                 `json:"cancel_url"`
+	Metadata        map[string]interface{} `json:"metadata"`
+}
+
+type collectFromCustomerByCardResponse struct {
+	TransactionID string `json:"transaction_id"`
+	PaymentURL    string `json:"payment_url"`
+}
+
+// CollectFromCustomerByCard starts a hosted card checkout. Snippe requires
+// billing details for card payments, and the customer completes the payment
+// on the returned payment_url — the mobile app must open that URL in a
+// WebView or external browser, then rely on the payment.completed webhook.
+func (c *PaymentClient) CollectFromCustomerByCard(
+	phoneNumber string,
+	amount int,
+	billingAddress string,
+	billingCity string,
+	billingState string,
+	billingPostcode string,
+	billingCountry string,
+	redirectURL string,
+	cancelURL string,
+	metadata map[string]interface{},
+) (string, string, error) {
+	slog.Info("payment service: initiating card collection",
+		"amount_tzs", amount,
+		"billing_city", billingCity,
+		"billing_country", billingCountry)
+
+	resp, err := c.doRequest(http.MethodPost, "/v1/collect/card", collectFromCustomerByCardRequest{
+		PhoneNumber:     phoneNumber,
+		Amount:          amount,
+		BillingAddress:  billingAddress,
+		BillingCity:     billingCity,
+		BillingState:    billingState,
+		BillingPostcode: billingPostcode,
+		BillingCountry:  billingCountry,
+		RedirectURL:     redirectURL,
+		CancelURL:       cancelURL,
+		Metadata:        metadata,
+	})
+	if err != nil {
+		slog.Error("payment service: card collection request failed", "error", err)
+		return "", "", err
+	}
+
+	var out collectFromCustomerByCardResponse
+	if err := decodeJSONResponse(resp, &out); err != nil {
+		slog.Error("payment service: card collection response invalid", "error", err)
+		return "", "", err
+	}
+
+	if out.PaymentURL == "" {
+		slog.Error("payment service: card collection returned no payment_url",
+			"transaction_id", out.TransactionID)
+		return "", "", fmt.Errorf("card collection returned no payment_url")
+	}
+
+	slog.Info("payment service: card checkout created, customer must open payment page",
+		"transaction_id", out.TransactionID)
+
+	return out.TransactionID, out.PaymentURL, nil
 }
 
 type holdEscrowRequest struct {
@@ -134,6 +218,11 @@ func (c *PaymentClient) HoldEscrow(
 	holdAmount int,
 	metadata map[string]interface{},
 ) (string, error) {
+	slog.Info("payment service: holding funds in escrow",
+		"collection_transaction_id", collectionTransactionID,
+		"booking_reference", bookingReference,
+		"hold_amount_tzs", holdAmount)
+
 	resp, err := c.doRequest(http.MethodPost, "/v1/escrow/hold", holdEscrowRequest{
 		CollectionTransactionID: collectionTransactionID,
 		BookingReference:        bookingReference,
@@ -141,13 +230,23 @@ func (c *PaymentClient) HoldEscrow(
 		Metadata:                metadata,
 	})
 	if err != nil {
+		slog.Error("payment service: escrow hold request failed",
+			"booking_reference", bookingReference,
+			"error", err)
 		return "", err
 	}
 
 	var out holdEscrowResponse
 	if err := decodeJSONResponse(resp, &out); err != nil {
+		slog.Error("payment service: escrow hold response invalid",
+			"booking_reference", bookingReference,
+			"error", err)
 		return "", err
 	}
+
+	slog.Info("payment service: funds held in escrow",
+		"booking_reference", bookingReference,
+		"escrow_hold_id", out.EscrowHoldID)
 
 	return out.EscrowHoldID, nil
 }
@@ -171,6 +270,11 @@ func (c *PaymentClient) ReleaseEscrow(
 	recipientName string,
 	narration string,
 ) (string, error) {
+	slog.Info("payment service: releasing escrow to maid",
+		"collection_transaction_id", collectionTransactionID,
+		"recipient_name", recipientName,
+		"narration", narration)
+
 	resp, err := c.doRequest(http.MethodPost, "/v1/escrow/release", releaseEscrowRequest{
 		CollectionTransactionID: collectionTransactionID,
 		RecipientPhone:          recipientPhone,
@@ -178,13 +282,22 @@ func (c *PaymentClient) ReleaseEscrow(
 		Narration:               narration,
 	})
 	if err != nil {
+		slog.Error("payment service: escrow release request failed",
+			"collection_transaction_id", collectionTransactionID,
+			"error", err)
 		return "", err
 	}
 
 	var out releaseEscrowResponse
 	if err := decodeJSONResponse(resp, &out); err != nil {
+		slog.Error("payment service: escrow release response invalid",
+			"collection_transaction_id", collectionTransactionID,
+			"error", err)
 		return "", err
 	}
+
+	slog.Info("payment service: escrow release accepted, disbursement in flight",
+		"disbursement_transaction_id", out.DisbursementTransactionID)
 
 	return out.DisbursementTransactionID, nil
 }
