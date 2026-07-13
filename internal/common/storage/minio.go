@@ -99,6 +99,25 @@ func (m *MinIOService) UploadProfilePhoto(ctx context.Context, userID uuid.UUID,
 	return objectName, nil
 }
 
+func (m *MinIOService) UploadImage(ctx context.Context, folder string, ownerID uuid.UUID, file io.Reader, fileSize int64, contentType string) (string, error) {
+	ext := ".jpg"
+	if contentType == "image/png" {
+		ext = ".png"
+	}
+
+	objectName := fmt.Sprintf("%s/%s_%d%s", folder, ownerID.String(), time.Now().UnixNano(), ext)
+
+	_, err := m.client.PutObject(ctx, m.bucketName, objectName, file, fileSize, minio.PutObjectOptions{
+		ContentType: contentType,
+	})
+	if err != nil {
+		return "", fmt.Errorf("failed to upload image to %s: %w", folder, err)
+	}
+
+	log.Printf("Uploaded image: %s", objectName)
+	return objectName, nil
+}
+
 func (m *MinIOService) GetPresignedURL(ctx context.Context, objectName string, expiry time.Duration) (string, error) {
 	url, err := m.client.PresignedGetObject(ctx, m.bucketName, objectName, expiry, nil)
 	if err != nil {

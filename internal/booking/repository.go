@@ -156,6 +156,36 @@ func (r *Repository) UpdateServiceCompletedAt(ctx context.Context, bookingID uui
 		Update("service_completed_at", completedAt).Error
 }
 
+func (r *Repository) UpdateServiceStartedAt(ctx context.Context, bookingID uuid.UUID, startedAt time.Time) error {
+	return r.db.WithContext(ctx).
+		Model(&Booking{}).
+		Where("id = ?", bookingID).
+		Update("service_started_at", startedAt).Error
+}
+
+func (r *Repository) UpdateCompletionDetails(ctx context.Context, bookingID uuid.UUID, notes, beforePhotoURL, afterPhotoURL string) error {
+	updates := map[string]interface{}{}
+	if notes != "" {
+		updates["completion_notes"] = notes
+	}
+	if beforePhotoURL != "" {
+		updates["before_photo_url"] = beforePhotoURL
+	}
+	if afterPhotoURL != "" {
+		updates["after_photo_url"] = afterPhotoURL
+	}
+
+	hasUpdates := len(updates) > 0
+	if !hasUpdates {
+		return nil
+	}
+
+	return r.db.WithContext(ctx).
+		Model(&Booking{}).
+		Where("id = ?", bookingID).
+		Updates(updates).Error
+}
+
 func (r *Repository) UpdateArrivalLocation(ctx context.Context, bookingID uuid.UUID, lat, lng float64, arrivedAt time.Time) error {
 	return r.db.WithContext(ctx).
 		Model(&BookingLocation{}).

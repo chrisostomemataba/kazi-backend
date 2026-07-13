@@ -75,6 +75,7 @@ func decodeJSONResponse(resp *http.Response, out interface{}) error {
 
 type collectFromCustomerRequest struct {
 	PhoneNumber       string                 `json:"phone_number"`
+	CustomerPhone     string                 `json:"customer_phone"`
 	Amount            int                    `json:"amount"`
 	CustomerFirstname string                 `json:"customer_firstname"`
 	CustomerLastname  string                 `json:"customer_lastname"`
@@ -90,6 +91,7 @@ type collectFromCustomerResponse struct {
 // after the maid has accepted the booking.
 func (c *PaymentClient) CollectFromCustomer(
 	phoneNumber string,
+	customerPhone string,
 	amount int,
 	customerFirstname string,
 	customerLastname string,
@@ -102,6 +104,7 @@ func (c *PaymentClient) CollectFromCustomer(
 
 	resp, err := c.doRequest(http.MethodPost, "/v1/collect/mobile", collectFromCustomerRequest{
 		PhoneNumber:       phoneNumber,
+		CustomerPhone:     customerPhone,
 		Amount:            amount,
 		CustomerFirstname: customerFirstname,
 		CustomerLastname:  customerLastname,
@@ -207,7 +210,7 @@ type holdEscrowRequest struct {
 }
 
 type holdEscrowResponse struct {
-	EscrowHoldID string `json:"escrow_hold_id"`
+	ID string `json:"id"`
 }
 
 // HoldEscrow moves a completed collection into escrow after payment.completed
@@ -246,9 +249,9 @@ func (c *PaymentClient) HoldEscrow(
 
 	slog.Info("payment service: funds held in escrow",
 		"booking_reference", bookingReference,
-		"escrow_hold_id", out.EscrowHoldID)
+		"escrow_hold_id", out.ID)
 
-	return out.EscrowHoldID, nil
+	return out.ID, nil
 }
 
 type releaseEscrowRequest struct {

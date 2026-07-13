@@ -4,26 +4,59 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"mime/multipart"
 	"time"
- 
+
 	"kazi-backend/internal/auth"
 	"kazi-backend/internal/booking"
- 
+	"kazi-backend/internal/common/storage"
+
 	"github.com/google/uuid"
 )
- 
+
 type Service struct {
-	repo        *Repository
-	authRepo    *auth.Repository
-	bookingRepo *booking.Repository
+	repo         *Repository
+	authRepo     *auth.Repository
+	bookingRepo  *booking.Repository
+	minioService *storage.MinIOService
 }
- 
-func NewService(repo *Repository, authRepo *auth.Repository, bookingRepo *booking.Repository) *Service {
+
+func NewService(repo *Repository, authRepo *auth.Repository, bookingRepo *booking.Repository, minioService *storage.MinIOService) *Service {
 	return &Service{
-		repo:        repo,
-		authRepo:    authRepo,
-		bookingRepo: bookingRepo,
+		repo:         repo,
+		authRepo:     authRepo,
+		bookingRepo:  bookingRepo,
+		minioService: minioService,
 	}
+}
+
+func (s *Service) UploadReviewPhoto(ctx context.Context, reviewerID uuid.UUID, file *multipart.FileHeader) (string, error) {
+	openedFile, openError := file.Open()
+	if openError != nil {
+		return "", fmt.Errorf("failed to open photo: %w", openError)
+	}
+	defer openedFile.Close()
+
+	contentType := file.Header.Get("Content-Type")
+	objectName, uploadError := s.minioService.UploadImage(ctx, "reviews/photos", reviewerID, openedFile, file.Size, contentType)
+	if uploadError != nil {
+		return "", fmt.Errorf("failed to upload review photo: %w", uploadError)
+	}
+
+	return objectName, nil
+}
+
+func (s *Service) presignPhotoURLs(ctx context.Context, raw string) []string {
+	objectNames := DecodeTags(raw)
+	presignedURLs := make([]string, 0, len(objectNames))
+	for _, objectName := range objectNames {
+		presignedURL, presignError := s.minioService.GetPresignedURL(ctx, objectName, time.Hour)
+		if presignError != nil {
+			continue
+		}
+		presignedURLs = append(presignedURLs, presignedURL)
+	}
+	return presignedURLs
 }
  
 func (s *Service) CreateReview(ctx context.Context, reviewerID uuid.UUID, req *CreateReviewRequest) (*ReviewResponse, error) {
@@ -60,6 +93,7 @@ func (s *Service) CreateReview(ctx context.Context, reviewerID uuid.UUID, req *C
 		Rating:     req.Rating,
 		Comment:    req.Comment,
 		Tags:       EncodeTags(req.Tags),
+		PhotoURLs:  EncodeTags(req.PhotoURLs),
 	}
  
 	if err := s.repo.Create(ctx, review); err != nil {
@@ -80,6 +114,7 @@ func (s *Service) CreateReview(ctx context.Context, reviewerID uuid.UUID, req *C
 		Rating:           review.Rating,
 		Comment:          review.Comment,
 		Tags:             DecodeTags(review.Tags),
+		PhotoURLs:        s.presignPhotoURLs(ctx, review.PhotoURLs),
 		CreatedAt:        review.CreatedAt.Format(time.RFC3339),
 	}, nil
 }
@@ -105,6 +140,7 @@ func (s *Service) GetMaidReviews(ctx context.Context, maidID uuid.UUID, limit, o
 			Rating:           r.Rating,
 			Comment:          r.Comment,
 			Tags:             DecodeTags(r.Tags),
+			PhotoURLs:        s.presignPhotoURLs(ctx, r.PhotoURLs),
 			CreatedAt:        r.CreatedAt.Format(time.RFC3339),
 		})
 	}

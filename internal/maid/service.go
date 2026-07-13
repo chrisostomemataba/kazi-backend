@@ -261,9 +261,40 @@ func (s *Service) GetWallet(ctx context.Context, maidID uuid.UUID) (*WalletRespo
 	if err != nil {
 		return nil, fmt.Errorf("get wallet: %w", err)
 	}
+
+	pendingAmount, pendingError := s.repo.GetPendingEscrowAmount(ctx, maidID)
+	if pendingError != nil {
+		pendingAmount = 0
+	}
+
 	return &WalletResponse{
 		AvailableBalance: wallet.AvailableBalance,
+		PendingAmount:    pendingAmount,
 		TotalEarned:      wallet.TotalEarned,
 		TotalWithdrawn:   wallet.TotalWithdrawn,
 	}, nil
+}
+
+func (s *Service) GetWalletTransactions(ctx context.Context, maidID uuid.UUID, limit, offset int) ([]WalletTransactionResponse, error) {
+	transactions, findError := s.repo.GetWalletTransactions(ctx, maidID, limit, offset)
+	if findError != nil {
+		return nil, fmt.Errorf("get wallet transactions: %w", findError)
+	}
+
+	responses := make([]WalletTransactionResponse, 0, len(transactions))
+	for _, transaction := range transactions {
+		response := WalletTransactionResponse{
+			ID:              transaction.ID.String(),
+			TransactionType: transaction.TransactionType,
+			Amount:          transaction.Amount,
+			CreatedAt:       transaction.CreatedAt.Format(time.RFC3339),
+		}
+		if transaction.RelatedBookingID != nil {
+			relatedBookingID := transaction.RelatedBookingID.String()
+			response.RelatedBookingID = &relatedBookingID
+		}
+		responses = append(responses, response)
+	}
+
+	return responses, nil
 }

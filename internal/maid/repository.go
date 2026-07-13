@@ -236,3 +236,17 @@ func (r *Repository) GetWalletTransactions(ctx context.Context, maidID uuid.UUID
 		Find(&txs).Error
 	return txs, err
 }
+
+// GetPendingEscrowAmount sums payouts for jobs the customer has paid for but
+// which have not yet been released to the maid — shown as "pending" on the wallet.
+func (r *Repository) GetPendingEscrowAmount(ctx context.Context, maidID uuid.UUID) (int, error) {
+	var pendingAmount int
+	err := r.db.WithContext(ctx).
+		Table("bookings").
+		Select("COALESCE(SUM(booking_pricings.maid_payout_amount), 0)").
+		Joins("JOIN booking_pricings ON booking_pricings.booking_id = bookings.id").
+		Where("bookings.maid_id = ? AND bookings.payment_status IN ?",
+			maidID, []string{"paid_held_escrow", "disbursement_pending"}).
+		Scan(&pendingAmount).Error
+	return pendingAmount, err
+}

@@ -103,6 +103,15 @@ type MaidSearchResult struct {
 
 type WalletResponse struct {
 	AvailableBalance int `json:"available_balance"`
+	PendingAmount    int `json:"pending_amount"`
 	TotalEarned      int `json:"total_earned"`
 	TotalWithdrawn   int `json:"total_withdrawn"`
+}
+
+type WalletTransactionResponse struct {
+	ID               string  `json:"id"`
+	TransactionType  string  `json:"transaction_type"`
+	Amount           int     `json:"amount"`
+	RelatedBookingID *string `json:"related_booking_id,omitempty"`
+	CreatedAt        string  `json:"created_at"`
 }

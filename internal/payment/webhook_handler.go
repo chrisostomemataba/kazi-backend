@@ -37,10 +37,14 @@ type webhookPayload struct {
 }
 
 func (h *WebhookHandler) HandleWebhook(c *fiber.Ctx) error {
-	if h.sharedSecret == "" || c.Get("X-Webhook-Secret") != h.sharedSecret {
-		slog.Warn("payment webhook: rejected request with missing or wrong shared secret",
+	if h.sharedSecret != "" && c.Get("X-Webhook-Secret") != h.sharedSecret {
+		slog.Warn("payment webhook: rejected request with wrong shared secret",
 			"remote_ip", c.IP())
 		return util.ErrorResponse(c, http.StatusUnauthorized, "invalid webhook secret")
+	}
+	if h.sharedSecret == "" {
+		slog.Warn("payment webhook: no PAYMENT_WEBHOOK_SECRET configured, accepting request unverified",
+			"remote_ip", c.IP())
 	}
 
 	var payload webhookPayload

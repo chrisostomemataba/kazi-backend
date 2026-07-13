@@ -6,11 +6,13 @@ import (
 	"fmt"
 	"log/slog"
 	"math"
+	"mime/multipart"
 	"time"
 
 	"strings"
 
 	"kazi-backend/internal/auth"
+	"kazi-backend/internal/common/storage"
 	"kazi-backend/internal/customer"
 	"kazi-backend/internal/maid"
 	"kazi-backend/internal/notification"
@@ -40,6 +42,7 @@ type Service struct {
 	customerRepo    *customer.Repository
 	notificationSvc *notification.Service
 	paymentClient   *payment.PaymentClient
+	minioService    *storage.MinIOService
 }
 
 func NewService(
@@ -49,6 +52,7 @@ func NewService(
 	customerRepo *customer.Repository,
 	notificationSvc *notification.Service,
 	paymentClient *payment.PaymentClient,
+	minioService *storage.MinIOService,
 ) *Service {
 	return &Service{
 		repo:            repo,
@@ -57,6 +61,7 @@ func NewService(
 		customerRepo:    customerRepo,
 		notificationSvc: notificationSvc,
 		paymentClient:   paymentClient,
+		minioService:    minioService,
 	}
 }
 
@@ -411,6 +416,7 @@ func (s *Service) InitiatePayment(ctx context.Context, customerID uuid.UUID, boo
 
 	transactionID, err := s.paymentClient.CollectFromCustomer(
 		req.PhoneNumber,
+		customerUser.PhoneNumber,
 		pricing.TotalAmount,
 		firstName,
 		lastName,
@@ -677,6 +683,12 @@ func (s *Service) MarkArrival(ctx context.Context, maidID uuid.UUID, bookingID s
 		return nil, fmt.Errorf("update status: %w", err)
 	}
 
+	// Work duration is measured from arrival, shown on the completion summary
+	if err := s.repo.UpdateServiceStartedAt(ctx, bookingUUID, now); err != nil {
+		slog.Warn("booking: failed to record service start time", "error", err)
+	}
+	booking.ServiceStartedAt = &now
+
 	// Store arrival GPS on booking location
 	if req.Latitude != 0 && req.Longitude != 0 {
 		s.repo.UpdateArrivalLocation(ctx, bookingUUID, req.Latitude, req.Longitude, now)
@@ -710,7 +722,7 @@ func (s *Service) MarkArrival(ctx context.Context, maidID uuid.UUID, bookingID s
 
 // ── Workflow E2: Maid marks work complete ─────────────────────────────────────
 
-func (s *Service) MarkComplete(ctx context.Context, maidID uuid.UUID, bookingID string) (*BookingResponse, error) {
+func (s *Service) MarkComplete(ctx context.Context, maidID uuid.UUID, bookingID string, req *CompleteRequest) (*BookingResponse, error) {
 	bookingUUID, err := uuid.Parse(bookingID)
 	if err != nil {
 		return nil, errors.New("invalid booking ID")
@@ -733,13 +745,33 @@ func (s *Service) MarkComplete(ctx context.Context, maidID uuid.UUID, bookingID 
 	if err := s.repo.UpdateServiceCompletedAt(ctx, bookingUUID, now); err != nil {
 		return nil, fmt.Errorf("update completion time: %w", err)
 	}
+	booking.ServiceCompletedAt = &now
+
+	if req != nil {
+		if err := s.repo.UpdateCompletionDetails(ctx, bookingUUID, req.Notes, req.BeforePhotoURL, req.AfterPhotoURL); err != nil {
+			slog.Warn("booking: failed to save completion details", "error", err)
+		} else {
+			booking.CompletionNotes = req.Notes
+			if req.BeforePhotoURL != "" {
+				booking.BeforePhotoURL = &req.BeforePhotoURL
+			}
+			if req.AfterPhotoURL != "" {
+				booking.AfterPhotoURL = &req.AfterPhotoURL
+			}
+		}
+	}
+
+	timelineNotes := "Maid marked work as complete, awaiting customer confirmation"
+	if req != nil && req.Notes != "" {
+		timelineNotes = req.Notes
+	}
 
 	s.repo.AddTimelineEvent(ctx, &BookingTimeline{
 		BookingID:      bookingUUID,
 		EventType:      "maid_marked_complete",
 		EventTimestamp: now,
 		TriggeredBy:    &maidID,
-		Notes:          "Maid marked work as complete, awaiting customer confirmation",
+		Notes:          timelineNotes,
 	})
 
 	maidUser, _ := s.authRepo.FindUserByID(ctx, maidID)
@@ -758,6 +790,37 @@ func (s *Service) MarkComplete(ctx context.Context, maidID uuid.UUID, bookingID 
 	location, _ := s.repo.GetBookingLocation(ctx, bookingUUID)
 	pricing, _ := s.repo.GetBookingPricing(ctx, bookingUUID)
 	return s.buildBookingResponse(ctx, booking, location, pricing, nil)
+}
+
+// UploadJobPhoto stores a before/after work photo for the completion summary.
+func (s *Service) UploadJobPhoto(ctx context.Context, maidID uuid.UUID, bookingID string, file *multipart.FileHeader) (string, error) {
+	bookingUUID, parseError := uuid.Parse(bookingID)
+	if parseError != nil {
+		return "", errors.New("invalid booking ID")
+	}
+
+	jobBooking, findError := s.repo.GetBookingByID(ctx, bookingUUID)
+	if findError != nil {
+		return "", errors.New("booking not found")
+	}
+
+	if jobBooking.MaidID != maidID {
+		return "", errors.New("unauthorized")
+	}
+
+	openedFile, openError := file.Open()
+	if openError != nil {
+		return "", fmt.Errorf("failed to open photo: %w", openError)
+	}
+	defer openedFile.Close()
+
+	contentType := file.Header.Get("Content-Type")
+	objectName, uploadError := s.minioService.UploadImage(ctx, "jobs/photos", maidID, openedFile, file.Size, contentType)
+	if uploadError != nil {
+		return "", fmt.Errorf("failed to upload job photo: %w", uploadError)
+	}
+
+	return objectName, nil
 }
 
 // ── Workflow E2 + F: Customer confirms completion → triggers escrow release ──
@@ -947,6 +1010,28 @@ func (s *Service) buildBookingResponse(
 		StartTime:       booking.StartTime,
 		EndTime:         booking.EndTime,
 		DurationHours:   booking.DurationHours,
+		CompletionNotes: booking.CompletionNotes,
+	}
+
+	if booking.ServiceStartedAt != nil {
+		startedAt := booking.ServiceStartedAt.Format(time.RFC3339)
+		response.ServiceStartedAt = &startedAt
+	}
+	if booking.ServiceCompletedAt != nil {
+		completedAt := booking.ServiceCompletedAt.Format(time.RFC3339)
+		response.ServiceCompletedAt = &completedAt
+	}
+	if booking.BeforePhotoURL != nil {
+		presignedBefore, presignError := s.minioService.GetPresignedURL(ctx, *booking.BeforePhotoURL, time.Hour)
+		if presignError == nil {
+			response.BeforePhotoURL = presignedBefore
+		}
+	}
+	if booking.AfterPhotoURL != nil {
+		presignedAfter, presignError := s.minioService.GetPresignedURL(ctx, *booking.AfterPhotoURL, time.Hour)
+		if presignError == nil {
+			response.AfterPhotoURL = presignedAfter
+		}
 	}
 
 	maidUser, err := s.authRepo.FindUserByID(ctx, booking.MaidID)

@@ -209,3 +209,17 @@ func (h *Handler) GetWallet(c *fiber.Ctx) error {
 
 	return util.SuccessResponse(c, wallet, "Wallet retrieved successfully")
 }
+
+func (h *Handler) GetWalletTransactions(c *fiber.Ctx) error {
+	userID := c.Locals("userID").(uuid.UUID)
+
+	limit := c.QueryInt("limit", 20)
+	offset := c.QueryInt("offset", 0)
+
+	transactions, err := h.service.GetWalletTransactions(c.Context(), userID, limit, offset)
+	if err != nil {
+		return util.ErrorResponse(c, fiber.StatusInternalServerError, err.Error())
+	}
+
+	return util.SuccessResponse(c, transactions, "Wallet transactions retrieved successfully")
+}

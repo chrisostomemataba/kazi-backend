@@ -9,7 +9,9 @@ import (
 	"kazi-backend/internal/admin"
 	"kazi-backend/internal/auth"
 	"kazi-backend/internal/booking"
+	"kazi-backend/internal/chat"
 	"kazi-backend/internal/common/database"
+	"kazi-backend/internal/dispute"
 	"kazi-backend/internal/common/sms"
 	"kazi-backend/internal/common/storage"
 	wsHub "kazi-backend/internal/common/websocket"
@@ -55,6 +57,8 @@ func main() {
 		&booking.BookingTimeline{},
 		&booking.Payment{},
 		&review.Review{},
+		&dispute.Dispute{},
+		&chat.ChatMessage{},
 		&notification.Notification{},
 		&admin.AdminUser{},
 		&admin.AuditLog{},
@@ -88,9 +92,11 @@ func main() {
 	maidModule := maid.NewModule(db, authModule.Repository, minioService, notifModule.Service)
 	customerModule := customer.NewModule(db, authModule.Repository)
 	paymentClient := payment.NewPaymentClient(cfg.PaymentServiceURL)
-	bookingModule := booking.NewModule(db, authModule.Repository, maidModule.Repository, customerModule.Repository, notifModule.Service, paymentClient)
+	bookingModule := booking.NewModule(db, authModule.Repository, maidModule.Repository, customerModule.Repository, notifModule.Service, paymentClient, minioService)
 	paymentWebhookHandler := payment.NewWebhookHandler(bookingModule.Service, cfg.PaymentWebhookSecret)
-	reviewModule := review.NewModule(db, authModule.Repository, bookingModule.Repository)
+	reviewModule := review.NewModule(db, authModule.Repository, bookingModule.Repository, minioService)
+	disputeModule := dispute.NewModule(db, bookingModule.Repository, minioService, notifModule.Service)
+	chatModule := chat.NewModule(db, bookingModule.Repository, authModule.Repository, hub, notifModule.Service)
 	adminModule := admin.NewModule(db, minioService, notifModule.Service, cfg.JWTSecret)
 
 	// Lifecycle safety nets: lost-webhook recovery, payment expiry, 24h auto-confirm
@@ -113,6 +119,8 @@ func main() {
 		Customer:       customerModule.Handler,
 		Booking:        bookingModule.Handler,
 		Review:         reviewModule.Handler,
+		Dispute:        disputeModule.Handler,
+		Chat:           chatModule.Handler,
 		Admin:          adminModule.Handler,
 		Notification:   notifModule.Handler,
 		WebSocket:      notifModule.WebSocketHandler,

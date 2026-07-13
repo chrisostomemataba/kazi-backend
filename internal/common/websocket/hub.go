@@ -78,6 +78,14 @@ func (h *Hub) SendToUser(userID uuid.UUID, message []byte) {
 	}
 }
 
+func (h *Hub) IsConnected(userID uuid.UUID) bool {
+	h.mu.RLock()
+	defer h.mu.RUnlock()
+
+	_, isConnected := h.clients[userID]
+	return isConnected
+}
+
 func (h *Hub) ReadPump(client *Client) {
 	defer func() {
 		h.Unregister <- client

@@ -133,12 +133,49 @@ func (h *Handler) MarkComplete(c *fiber.Ctx) error {
 	maidID := c.Locals("userID").(uuid.UUID)
 	bookingID := c.Params("id")
 
-	booking, err := h.service.MarkComplete(c.Context(), maidID, bookingID)
+	// The summary body is optional — a bare "complete" tap still works.
+	var req CompleteRequest
+	if len(c.Body()) > 0 {
+		if err := c.BodyParser(&req); err != nil {
+			return util.ValidationErrorResponse(c, "Invalid request body")
+		}
+		if err := util.ValidateStruct(&req); err != nil {
+			return util.ValidationErrorResponse(c, err.Error())
+		}
+	}
+
+	booking, err := h.service.MarkComplete(c.Context(), maidID, bookingID, &req)
 	if err != nil {
 		return util.ErrorResponse(c, fiber.StatusBadRequest, err.Error())
 	}
 
 	return util.SuccessResponse(c, booking, "Work marked as complete, awaiting customer confirmation")
+}
+
+func (h *Handler) UploadJobPhoto(c *fiber.Ctx) error {
+	maidID := c.Locals("userID").(uuid.UUID)
+	bookingID := c.Params("id")
+
+	file, err := c.FormFile("photo")
+	if err != nil {
+		return util.ValidationErrorResponse(c, "Photo is required")
+	}
+
+	if file.Size > 5*1024*1024 {
+		return util.ValidationErrorResponse(c, "Image file too large (max 5MB)")
+	}
+
+	contentType := file.Header.Get("Content-Type")
+	if contentType != "image/jpeg" && contentType != "image/png" {
+		return util.ValidationErrorResponse(c, "Only JPEG and PNG image formats are allowed")
+	}
+
+	objectName, err := h.service.UploadJobPhoto(c.Context(), maidID, bookingID, file)
+	if err != nil {
+		return util.ErrorResponse(c, fiber.StatusBadRequest, err.Error())
+	}
+
+	return util.SuccessResponse(c, JobPhotoUploadResponse{ObjectName: objectName}, "Photo uploaded successfully")
 }
 
 // ── Workflow E2+F: Customer confirms completion → releases payment ────────────
