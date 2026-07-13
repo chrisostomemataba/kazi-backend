@@ -35,6 +35,31 @@ func (h *Handler) CreateReview(c *fiber.Ctx) error {
 	return util.SuccessResponse(c, resp, "Review submitted successfully")
 }
  
+func (h *Handler) UploadReviewPhoto(c *fiber.Ctx) error {
+	reviewerID := c.Locals("userID").(uuid.UUID)
+
+	file, err := c.FormFile("photo")
+	if err != nil {
+		return util.ValidationErrorResponse(c, "Photo is required")
+	}
+
+	if file.Size > 5*1024*1024 {
+		return util.ValidationErrorResponse(c, "Image file too large (max 5MB)")
+	}
+
+	contentType := file.Header.Get("Content-Type")
+	if contentType != "image/jpeg" && contentType != "image/png" {
+		return util.ValidationErrorResponse(c, "Only JPEG and PNG image formats are allowed")
+	}
+
+	objectName, err := h.service.UploadReviewPhoto(c.Context(), reviewerID, file)
+	if err != nil {
+		return util.ErrorResponse(c, fiber.StatusInternalServerError, err.Error())
+	}
+
+	return util.SuccessResponse(c, ReviewPhotoUploadResponse{ObjectName: objectName}, "Photo uploaded successfully")
+}
+
 func (h *Handler) GetMaidReviews(c *fiber.Ctx) error {
 	maidIDStr := c.Params("maid_id")
 	maidID, err := uuid.Parse(maidIDStr)

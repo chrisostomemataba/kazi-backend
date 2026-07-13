@@ -24,6 +24,9 @@ type Booking struct {
 	PaymentStatus                    string    `gorm:"type:varchar(30);default:'unpaid';index:idx_payment_status"`
 	ServiceStartedAt                 *time.Time
 	ServiceCompletedAt               *time.Time
+	CompletionNotes                  string  `gorm:"type:text"`
+	BeforePhotoURL                   *string `gorm:"type:text"`
+	AfterPhotoURL                    *string `gorm:"type:text"`
 	MaidCurrentLat                   *float64 `gorm:"type:decimal(10,8)"`
 	MaidCurrentLng                   *float64 `gorm:"type:decimal(11,8)"`
 	MaidLocationUpdatedAt            *time.Time

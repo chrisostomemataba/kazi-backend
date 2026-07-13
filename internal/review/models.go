@@ -15,6 +15,7 @@ type Review struct {
 	Rating      int       `gorm:"not null"`
 	Comment     string    `gorm:"type:text"`
 	Tags        string    `gorm:"type:text"`
+	PhotoURLs   string    `gorm:"type:text"` // JSON-encoded array of object names
 	IsVisible   bool      `gorm:"default:true"`
 	CreatedAt   time.Time
 }
@@ -31,6 +32,11 @@ type CreateReviewRequest struct {
 	Rating    int      `json:"rating" validate:"required,min=1,max=5"`
 	Comment   string   `json:"comment" validate:"max=1000"`
 	Tags      []string `json:"tags" validate:"omitempty,max=5,dive,oneof=punctual thorough friendly professional fast"`
+	PhotoURLs []string `json:"photo_urls" validate:"omitempty,max=3"`
+}
+
+type ReviewPhotoUploadResponse struct {
+	ObjectName string `json:"object_name"`
 }
  
 type ReviewResponse struct {
@@ -42,5 +48,6 @@ type ReviewResponse struct {
 	Rating       int      `json:"rating"`
 	Comment      string   `json:"comment"`
 	Tags         []string `json:"tags"`
+	PhotoURLs    []string `json:"photo_urls,omitempty"`
 	CreatedAt    string   `json:"created_at"`
 }

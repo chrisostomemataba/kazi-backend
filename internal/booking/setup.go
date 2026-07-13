@@ -2,6 +2,7 @@ package booking
 
 import (
 	"kazi-backend/internal/auth"
+	"kazi-backend/internal/common/storage"
 	"kazi-backend/internal/customer"
 	"kazi-backend/internal/maid"
 	"kazi-backend/internal/notification"
@@ -23,9 +24,10 @@ func NewModule(
 	customerRepo *customer.Repository,
 	notificationService *notification.Service,
 	paymentClient *payment.PaymentClient,
+	minioService *storage.MinIOService,
 ) *Module {
 	repo := NewRepository(db)
-	service := NewService(repo, authRepo, maidRepo, customerRepo, notificationService, paymentClient)
+	service := NewService(repo, authRepo, maidRepo, customerRepo, notificationService, paymentClient, minioService)
 	handler := NewHandler(service)
 
 	return &Module{

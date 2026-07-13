@@ -4,8 +4,10 @@ import (
 	"kazi-backend/internal/admin"
 	"kazi-backend/internal/auth"
 	"kazi-backend/internal/booking"
+	"kazi-backend/internal/chat"
 	"kazi-backend/internal/common/middleware"
 	"kazi-backend/internal/customer"
+	"kazi-backend/internal/dispute"
 	"kazi-backend/internal/maid"
 	"kazi-backend/internal/notification"
 	"kazi-backend/internal/payment"
@@ -21,6 +23,8 @@ type Handlers struct {
 	Customer       *customer.Handler
 	Booking        *booking.Handler
 	Review         *review.Handler
+	Dispute        *dispute.Handler
+	Chat           *chat.Handler
 	Admin          *admin.Handler
 	Notification   *notification.Handler
 	WebSocket      *notification.WebSocketHandler
@@ -39,6 +43,8 @@ func Register(app *fiber.App, h Handlers, jwtSecret string) {
 	registerMaidRoutes(api, h.Maid, jwtSecret)
 	registerBookingRoutes(api, h.Booking, jwtSecret)
 	registerReviewRoutes(api, h.Review, jwtSecret)
+	registerDisputeRoutes(api, h.Dispute, jwtSecret)
+	registerChatRoutes(api, h.Chat, jwtSecret)
 	registerNotificationRoutes(api, h.Notification, jwtSecret)
 	registerAdminRoutes(api, h.Admin, jwtSecret)
 	registerWebSocketRoute(app, h.WebSocket)
@@ -72,6 +78,7 @@ func registerMaidRoutes(api fiber.Router, h *maid.Handler, jwtSecret string) {
 	protected.Put("/profile/location", middleware.RequireRole("maid"), h.UpdateLocation)
 	protected.Put("/profile/contract-rate", middleware.RequireRole("maid"), h.UpdateContractRate)
 	protected.Get("/wallet", middleware.RequireRole("maid"), h.GetWallet)
+	protected.Get("/wallet/transactions", middleware.RequireRole("maid"), h.GetWalletTransactions)
 
 	// Public maid search routes — no auth required
 	public := api.Group("/maids")
@@ -96,6 +103,7 @@ func registerBookingRoutes(api fiber.Router, h *booking.Handler, jwtSecret strin
 	maidBookings.Post("/:id/decline", middleware.RequireRole("maid"), h.DeclineBooking)
 	maidBookings.Post("/:id/arrive", middleware.RequireRole("maid"), h.MarkArrival)
 	maidBookings.Post("/:id/complete", middleware.RequireRole("maid"), h.MarkComplete)
+	maidBookings.Post("/:id/photo", middleware.RequireRole("maid"), h.UploadJobPhoto)
 
 	// Live location tracking
 	customer.Post("/:id/location", h.UpdateMaidLocation)
@@ -105,7 +113,24 @@ func registerBookingRoutes(api fiber.Router, h *booking.Handler, jwtSecret strin
 func registerReviewRoutes(api fiber.Router, h *review.Handler, jwtSecret string) {
 	g := api.Group("/reviews", middleware.RequireAuth(jwtSecret))
 	g.Post("/", middleware.RequireRole("customer"), h.CreateReview)
+	g.Post("/photo", middleware.RequireRole("customer"), h.UploadReviewPhoto)
 	g.Get("/maid/:maid_id", h.GetMaidReviews)
+}
+
+func registerDisputeRoutes(api fiber.Router, h *dispute.Handler, jwtSecret string) {
+	g := api.Group("/disputes", middleware.RequireAuth(jwtSecret))
+	g.Post("/", h.CreateDispute)
+	g.Post("/evidence", h.UploadEvidence)
+	g.Get("/my", h.GetMyDisputes)
+}
+
+func registerChatRoutes(api fiber.Router, h *chat.Handler, jwtSecret string) {
+	g := api.Group("/chat", middleware.RequireAuth(jwtSecret))
+	g.Get("/conversations", h.GetConversations)
+	g.Get("/unread-count", h.GetUnreadCount)
+	g.Get("/:booking_id/messages", h.GetMessages)
+	g.Post("/:booking_id/messages", h.SendMessage)
+	g.Post("/:booking_id/read", h.MarkRead)
 }
 
 func registerNotificationRoutes(api fiber.Router, h *notification.Handler, jwtSecret string) {

@@ -149,6 +149,28 @@ func (s *Service) NotifyCustomerPaymentFailed(ctx context.Context, customerID uu
 	})
 }
 
+// ── Workflow H: Dispute opened → confirm receipt to the reporter ──────────────
+
+func (s *Service) NotifyDisputeOpened(ctx context.Context, reporterID uuid.UUID, bookingRef string) error {
+	return s.CreateNotification(ctx, &Notification{
+		UserID:           reporterID,
+		Title:            "Malalamiko Yamepokelewa",
+		Message:          fmt.Sprintf("Tumepokea ripoti yako kuhusu booking %s. Timu yetu itaifanyia kazi ndani ya masaa 24.", bookingRef),
+		NotificationType: "dispute_opened",
+	})
+}
+
+// ── Chat: new message → notify recipient (push fallback for offline users) ────
+
+func (s *Service) NotifyNewChatMessage(ctx context.Context, recipientID uuid.UUID, senderName string) error {
+	return s.CreateNotification(ctx, &Notification{
+		UserID:           recipientID,
+		Title:            "Ujumbe Mpya",
+		Message:          fmt.Sprintf("%s amekutumia ujumbe mpya. Fungua app kujibu.", senderName),
+		NotificationType: "chat_message",
+	})
+}
+
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
 func (s *Service) GetUserNotifications(ctx context.Context, userID uuid.UUID, limit, offset int) ([]Notification, error) {

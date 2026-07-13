@@ -60,6 +60,17 @@ type ArrivalRequest struct {
 	Longitude float64 `json:"longitude"`
 }
 
+// Workflow E2 — everything is optional; a bare "complete" still works.
+type CompleteRequest struct {
+	Notes          string `json:"notes" validate:"max=1000"`
+	BeforePhotoURL string `json:"before_photo_url" validate:"max=500"`
+	AfterPhotoURL  string `json:"after_photo_url" validate:"max=500"`
+}
+
+type JobPhotoUploadResponse struct {
+	ObjectName string `json:"object_name"`
+}
+
 // Response types
 
 type BookingResponse struct {
@@ -74,6 +85,9 @@ type BookingResponse struct {
 	DurationHours   float64               `json:"duration_hours"`
 	ServiceStartedAt *string               `json:"service_started_at,omitempty"`
 	ServiceCompletedAt *string               `json:"service_completed_at,omitempty"`
+	CompletionNotes    string                `json:"completion_notes,omitempty"`
+	BeforePhotoURL     string                `json:"before_photo_url,omitempty"`
+	AfterPhotoURL      string                `json:"after_photo_url,omitempty"`
 	Maid            *BookingMaidData      `json:"maid,omitempty"`
 	Customer        *BookingCustomerData  `json:"customer,omitempty"`
 	Location        *BookingLocationData  `json:"location,omitempty"`
