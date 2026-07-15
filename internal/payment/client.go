@@ -202,6 +202,70 @@ func (c *PaymentClient) CollectFromCustomerByCard(
 	return out.TransactionID, out.PaymentURL, nil
 }
 
+type createSessionRequest struct {
+	Amount         int                    `json:"amount"`
+	AllowedMethods []string               `json:"allowed_methods"`
+	CustomerName   string                 `json:"customer_name"`
+	CustomerPhone  string                 `json:"customer_phone"`
+	CustomerEmail  string                 `json:"customer_email"`
+	Description    string                 `json:"description"`
+	ExpiresIn      int                    `json:"expires_in"`
+	RedirectURL    string                 `json:"redirect_url"`
+	Metadata       map[string]interface{} `json:"metadata"`
+}
+
+type createSessionResponse struct {
+	TransactionID  string `json:"transaction_id"`
+	CheckoutURL    string `json:"checkout_url"`
+	PaymentLinkURL string `json:"payment_link_url"`
+}
+
+func (c *PaymentClient) CreateCheckoutSession(
+	amount int,
+	customerName string,
+	customerPhone string,
+	customerEmail string,
+	expiresIn int,
+	redirectURL string,
+	metadata map[string]interface{},
+) (string, string, error) {
+	slog.Info("payment service: creating hosted checkout session",
+		"amount_tzs", amount,
+		"expires_in_seconds", expiresIn)
+
+	resp, err := c.doRequest(http.MethodPost, "/v1/collect/session", createSessionRequest{
+		Amount:         amount,
+		AllowedMethods: []string{"mobile_money", "card", "qr"},
+		CustomerName:   customerName,
+		CustomerPhone:  customerPhone,
+		CustomerEmail:  customerEmail,
+		ExpiresIn:      expiresIn,
+		RedirectURL:    redirectURL,
+		Metadata:       metadata,
+	})
+	if err != nil {
+		slog.Error("payment service: session creation request failed", "error", err)
+		return "", "", err
+	}
+
+	var out createSessionResponse
+	if err := decodeJSONResponse(resp, &out); err != nil {
+		slog.Error("payment service: session creation response invalid", "error", err)
+		return "", "", err
+	}
+
+	if out.CheckoutURL == "" {
+		slog.Error("payment service: session creation returned no checkout_url",
+			"transaction_id", out.TransactionID)
+		return "", "", fmt.Errorf("session creation returned no checkout_url")
+	}
+
+	slog.Info("payment service: checkout session created, customer must open checkout page",
+		"transaction_id", out.TransactionID)
+
+	return out.TransactionID, out.CheckoutURL, nil
+}
+
 type holdEscrowRequest struct {
 	CollectionTransactionID string                 `json:"collection_transaction_id"`
 	BookingReference        string                 `json:"booking_reference"`
