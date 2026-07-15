@@ -149,6 +149,24 @@ func (s *Service) NotifyCustomerPaymentFailed(ctx context.Context, customerID uu
 	})
 }
 
+func (s *Service) NotifyCustomerPaymentExpired(ctx context.Context, customerID uuid.UUID, bookingRef string) error {
+	return s.CreateNotification(ctx, &Notification{
+		UserID:           customerID,
+		Title:            "Muda wa Malipo Umeisha",
+		Message:          fmt.Sprintf("Muda wa kulipia booking %s umeisha. Tafadhali jaribu tena.", bookingRef),
+		NotificationType: "payment_expired",
+	})
+}
+
+func (s *Service) NotifyCustomerPaymentVoided(ctx context.Context, customerID uuid.UUID, bookingRef string) error {
+	return s.CreateNotification(ctx, &Notification{
+		UserID:           customerID,
+		Title:            "Umeghairi Malipo",
+		Message:          fmt.Sprintf("Umeghairi malipo ya booking %s. Tafadhali jaribu tena kama bado unahitaji huduma.", bookingRef),
+		NotificationType: "payment_voided",
+	})
+}
+
 // ── Workflow H: Dispute opened → confirm receipt to the reporter ──────────────
 
 func (s *Service) NotifyDisputeOpened(ctx context.Context, reporterID uuid.UUID, bookingRef string) error {

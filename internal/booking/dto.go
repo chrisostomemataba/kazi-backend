@@ -38,11 +38,8 @@ type DeclineBookingRequest struct {
 }
 
 // Workflow D
-// PaymentMethod defaults to "mobile". For "card" the payment microservice
-// returns a hosted Snippe checkout page; billing fields are optional and
-// default to Tanzanian values, redirect/cancel URLs default to app deep links.
 type InitiatePaymentRequest struct {
-	PaymentMethod   string `json:"payment_method" validate:"omitempty,oneof=mobile card"`
+	PaymentMethod   string `json:"payment_method" validate:"omitempty,oneof=session mobile card"`
 	Provider        string `json:"provider" validate:"omitempty,oneof=Mpesa TigoPesa AirtelMoney Halopesa Card"`
 	PhoneNumber     string `json:"phone_number" validate:"required,len=12"`
 	BillingAddress  string `json:"billing_address" validate:"max=200"`

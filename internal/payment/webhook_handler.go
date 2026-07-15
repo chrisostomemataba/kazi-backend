@@ -17,6 +17,10 @@ type WebhookEventHandler interface {
 	HandlePaymentCompleted(ctx context.Context, transactionID string) error
 	HandlePayoutCompleted(ctx context.Context, transactionID string) error
 	HandlePaymentFailed(ctx context.Context, transactionID string) error
+	HandlePaymentExpired(ctx context.Context, transactionID string) error
+	HandlePaymentVoided(ctx context.Context, transactionID string) error
+	HandlePayoutFailed(ctx context.Context, transactionID string) error
+	HandlePayoutReversed(ctx context.Context, transactionID string) error
 }
 
 type WebhookHandler struct {
@@ -76,6 +80,14 @@ func (h *WebhookHandler) HandleWebhook(c *fiber.Ctx) error {
 		err = h.events.HandlePayoutCompleted(ctx, payload.TransactionID)
 	case "payment.failed":
 		err = h.events.HandlePaymentFailed(ctx, payload.TransactionID)
+	case "payment.expired":
+		err = h.events.HandlePaymentExpired(ctx, payload.TransactionID)
+	case "payment.voided":
+		err = h.events.HandlePaymentVoided(ctx, payload.TransactionID)
+	case "payout.failed":
+		err = h.events.HandlePayoutFailed(ctx, payload.TransactionID)
+	case "payout.reversed":
+		err = h.events.HandlePayoutReversed(ctx, payload.TransactionID)
 	default:
 		slog.Info("payment webhook: ignoring event type we don't handle",
 			"event_type", payload.EventType,

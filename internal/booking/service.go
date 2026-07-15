@@ -396,13 +396,17 @@ func (s *Service) InitiatePayment(ctx context.Context, customerID uuid.UUID, boo
 
 	paymentMethod := req.PaymentMethod
 	if paymentMethod == "" {
-		paymentMethod = "mobile"
+		paymentMethod = "session"
 	}
 
 	slog.Info("payment: customer is initiating payment",
 		"booking_reference", booking.ReferenceNumber,
 		"payment_method", paymentMethod,
 		"amount_tzs", pricing.TotalAmount)
+
+	if paymentMethod == "session" {
+		return s.initiateSessionPayment(ctx, booking, pricing, customerUser, req)
+	}
 
 	if paymentMethod == "card" {
 		return s.initiateCardPayment(ctx, booking, pricing, customerUser.PhoneNumber, req)
@@ -532,6 +536,59 @@ func (s *Service) initiateCardPayment(
 	}, nil
 }
 
+func (s *Service) initiateSessionPayment(
+	ctx context.Context,
+	booking *Booking,
+	pricing *BookingPricing,
+	customerUser *auth.User,
+	req *InitiatePaymentRequest,
+) (*PaymentResponse, error) {
+	redirectURL := req.RedirectURL
+	if redirectURL == "" {
+		redirectURL = "kazi://payment/success"
+	}
+
+	phoneNumber := req.PhoneNumber
+	if phoneNumber == "" {
+		phoneNumber = customerUser.PhoneNumber
+	}
+
+	transactionID, checkoutURL, err := s.paymentClient.CreateCheckoutSession(
+		pricing.TotalAmount,
+		customerUser.FullName,
+		phoneNumber,
+		"",
+		0,
+		redirectURL,
+		map[string]interface{}{"booking_id": booking.ID.String()},
+	)
+	if err != nil {
+		slog.Error("payment: checkout session could not be created",
+			"booking_reference", booking.ReferenceNumber,
+			"error", err)
+		return nil, errors.New("session payment initiation failed")
+	}
+
+	if err := s.repo.UpdateBookingPaymentCollectionTxID(ctx, booking.ID, transactionID); err != nil {
+		return nil, fmt.Errorf("store transaction id: %w", err)
+	}
+
+	if err := s.repo.UpdatePaymentStatus(ctx, booking.ID, "collection_pending"); err != nil {
+		return nil, fmt.Errorf("update payment status: %w", err)
+	}
+
+	slog.Info("payment: checkout session created, customer must complete it on the payment page",
+		"booking_reference", booking.ReferenceNumber,
+		"transaction_id", transactionID)
+
+	return &PaymentResponse{
+		PaymentInitiated: true,
+		TransactionID:    transactionID,
+		PaymentURL:       checkoutURL,
+		Message:          "Fungua ukurasa wa malipo kukamilisha",
+	}, nil
+}
+
 // ── Payment webhook events (invoked via payment.WebhookEventHandler) ─────────
 
 func (s *Service) HandlePaymentCompleted(ctx context.Context, transactionID string) error {
@@ -653,6 +710,148 @@ func (s *Service) HandlePaymentFailed(ctx context.Context, transactionID string)
 	slog.Warn("payment: customer payment failed, booking was cancelled",
 		"booking_reference", booking.ReferenceNumber,
 		"customer_id", booking.CustomerID.String())
+
+	return nil
+}
+
+func (s *Service) HandlePaymentExpired(ctx context.Context, transactionID string) error {
+	booking, err := s.repo.GetBookingByCollectionTransactionID(ctx, transactionID)
+	if err != nil {
+		return fmt.Errorf("find booking by collection transaction: %w", err)
+	}
+
+	if booking.PaymentStatus == "paid_held_escrow" || booking.PaymentStatus == "disbursement_pending" || booking.PaymentStatus == "released_to_maid" {
+		slog.Warn("payment: payment.expired webhook arrived for a booking that is already paid, ignoring it",
+			"booking_reference", booking.ReferenceNumber,
+			"transaction_id", transactionID)
+		return nil
+	}
+	if booking.PaymentStatus == "failed" {
+		slog.Info("payment: duplicate payment.expired webhook ignored",
+			"booking_reference", booking.ReferenceNumber,
+			"transaction_id", transactionID)
+		return nil
+	}
+
+	if err := s.repo.UpdatePaymentStatus(ctx, booking.ID, "failed"); err != nil {
+		return fmt.Errorf("update payment status: %w", err)
+	}
+
+	if err := s.repo.UpdateBookingStatus(ctx, booking.ID, "cancelled_payment_failed"); err != nil {
+		return fmt.Errorf("update booking status: %w", err)
+	}
+
+	s.notificationSvc.NotifyCustomerPaymentExpired(ctx, booking.CustomerID, booking.ReferenceNumber)
+
+	slog.Warn("payment: checkout session expired before payment, booking was cancelled",
+		"booking_reference", booking.ReferenceNumber,
+		"customer_id", booking.CustomerID.String())
+
+	return nil
+}
+
+func (s *Service) HandlePaymentVoided(ctx context.Context, transactionID string) error {
+	booking, err := s.repo.GetBookingByCollectionTransactionID(ctx, transactionID)
+	if err != nil {
+		return fmt.Errorf("find booking by collection transaction: %w", err)
+	}
+
+	if booking.PaymentStatus == "paid_held_escrow" || booking.PaymentStatus == "disbursement_pending" || booking.PaymentStatus == "released_to_maid" {
+		slog.Warn("payment: payment.voided webhook arrived for a booking that is already paid, ignoring it",
+			"booking_reference", booking.ReferenceNumber,
+			"transaction_id", transactionID)
+		return nil
+	}
+	if booking.PaymentStatus == "failed" {
+		slog.Info("payment: duplicate payment.voided webhook ignored",
+			"booking_reference", booking.ReferenceNumber,
+			"transaction_id", transactionID)
+		return nil
+	}
+
+	if err := s.repo.UpdatePaymentStatus(ctx, booking.ID, "failed"); err != nil {
+		return fmt.Errorf("update payment status: %w", err)
+	}
+
+	if err := s.repo.UpdateBookingStatus(ctx, booking.ID, "cancelled_payment_failed"); err != nil {
+		return fmt.Errorf("update booking status: %w", err)
+	}
+
+	s.notificationSvc.NotifyCustomerPaymentVoided(ctx, booking.CustomerID, booking.ReferenceNumber)
+
+	slog.Warn("payment: customer cancelled the checkout session, booking was cancelled",
+		"booking_reference", booking.ReferenceNumber,
+		"customer_id", booking.CustomerID.String())
+
+	return nil
+}
+
+func (s *Service) HandlePayoutFailed(ctx context.Context, transactionID string) error {
+	booking, err := s.repo.GetBookingByDisbursementTransactionID(ctx, transactionID)
+	if err != nil {
+		return fmt.Errorf("find booking by disbursement transaction: %w", err)
+	}
+
+	if booking.PaymentStatus == "released_to_maid" {
+		slog.Info("payment: duplicate payout.failed webhook ignored, maid was already paid",
+			"booking_reference", booking.ReferenceNumber,
+			"transaction_id", transactionID)
+		return nil
+	}
+	if booking.PaymentStatus == "payout_failed" {
+		slog.Info("payment: duplicate payout.failed webhook ignored",
+			"booking_reference", booking.ReferenceNumber,
+			"transaction_id", transactionID)
+		return nil
+	}
+
+	if err := s.repo.UpdatePaymentStatus(ctx, booking.ID, "payout_failed"); err != nil {
+		return fmt.Errorf("update payment status: %w", err)
+	}
+
+	s.repo.AddTimelineEvent(ctx, &BookingTimeline{
+		BookingID:      booking.ID,
+		EventType:      "payout_failed",
+		EventTimestamp: time.Now(),
+		Notes:          "Snippe could not deliver the disbursement — escrow funds are not confirmed on the maid's phone, needs manual reconciliation",
+	})
+
+	slog.Error("payment: ACTION REQUIRED — payout to maid failed, escrow funds are unaccounted for",
+		"booking_reference", booking.ReferenceNumber,
+		"maid_id", booking.MaidID.String(),
+		"transaction_id", transactionID)
+
+	return nil
+}
+
+func (s *Service) HandlePayoutReversed(ctx context.Context, transactionID string) error {
+	booking, err := s.repo.GetBookingByDisbursementTransactionID(ctx, transactionID)
+	if err != nil {
+		return fmt.Errorf("find booking by disbursement transaction: %w", err)
+	}
+
+	if booking.PaymentStatus == "payout_reversed" {
+		slog.Info("payment: duplicate payout.reversed webhook ignored",
+			"booking_reference", booking.ReferenceNumber,
+			"transaction_id", transactionID)
+		return nil
+	}
+
+	if err := s.repo.UpdatePaymentStatus(ctx, booking.ID, "payout_reversed"); err != nil {
+		return fmt.Errorf("update payment status: %w", err)
+	}
+
+	s.repo.AddTimelineEvent(ctx, &BookingTimeline{
+		BookingID:      booking.ID,
+		EventType:      "payout_reversed",
+		EventTimestamp: time.Now(),
+		Notes:          "A completed payout was reversed after the fact — the maid's wallet display balance was already credited, needs manual reconciliation",
+	})
+
+	slog.Error("payment: ACTION REQUIRED — a completed payout was reversed, maid wallet display balance is now wrong",
+		"booking_reference", booking.ReferenceNumber,
+		"maid_id", booking.MaidID.String(),
+		"transaction_id", transactionID)
 
 	return nil
 }
