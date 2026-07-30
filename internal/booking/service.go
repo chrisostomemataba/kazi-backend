@@ -424,7 +424,7 @@ func (s *Service) InitiatePayment(ctx context.Context, customerID uuid.UUID, boo
 		pricing.TotalAmount,
 		firstName,
 		lastName,
-		"",
+		placeholderCustomerEmail(customerUser.PhoneNumber),
 		map[string]interface{}{"booking_id": bookingUUID.String()},
 	)
 	if err != nil {
@@ -557,7 +557,7 @@ func (s *Service) initiateSessionPayment(
 		pricing.TotalAmount,
 		customerUser.FullName,
 		phoneNumber,
-		"",
+		placeholderCustomerEmail(customerUser.PhoneNumber),
 		0,
 		redirectURL,
 		map[string]interface{}{"booking_id": booking.ID.String()},
@@ -1368,6 +1368,12 @@ func (s *Service) MaidLocationForCustomer(ctx context.Context, bookingID, caller
 		DistanceKm: math.Round(dist*100) / 100,
 		ETAMinutes: eta,
 	}, nil
+}
+
+// placeholderCustomerEmail synthesizes a unique per-customer email for Snippe,
+// which requires customer.email even though accounts here are phone-only.
+func placeholderCustomerEmail(phoneNumber string) string {
+	return phoneNumber + "@kazi.noemail"
 }
 
 func splitFullName(fullName string) (firstName, lastName string) {
