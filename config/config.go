@@ -23,6 +23,9 @@ type Config struct {
 	Environment          string
 	PaymentServiceURL    string
 	PaymentWebhookSecret string
+	CasdoorEndpoint      string
+	CasdoorClientID      string
+	CasdoorClientSecret  string
 }
 
 func LoadConfig() *Config {
@@ -45,6 +48,9 @@ func LoadConfig() *Config {
 		Environment:          getEnv("ENV", "development"),
 		PaymentServiceURL:    getEnv("PAYMENT_SERVICE_URL", ""),
 		PaymentWebhookSecret: getEnv("PAYMENT_WEBHOOK_SECRET", ""),
+		CasdoorEndpoint:      getEnv("CASDOOR_ENDPOINT", ""),
+		CasdoorClientID:      getEnv("CASDOOR_CLIENT_ID", ""),
+		CasdoorClientSecret:  getEnv("CASDOOR_CLIENT_SECRET", ""),
 	}
 
 	if err := cfg.Validate(); err != nil {
@@ -66,6 +72,15 @@ func (c *Config) Validate() error {
 	}
 	if c.MinIOSecretKey == "" {
 		return fmt.Errorf("MINIO_SECRET_KEY is required")
+	}
+	if c.CasdoorEndpoint == "" {
+		return fmt.Errorf("CASDOOR_ENDPOINT is required")
+	}
+	if c.CasdoorClientID == "" {
+		return fmt.Errorf("CASDOOR_CLIENT_ID is required")
+	}
+	if c.CasdoorClientSecret == "" {
+		return fmt.Errorf("CASDOOR_CLIENT_SECRET is required")
 	}
 	return nil
 }
