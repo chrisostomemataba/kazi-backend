@@ -117,8 +117,7 @@ func (r *Repository) FindStaleCollectionPending(ctx context.Context, cutoff time
 }
 
 // FindUnconfirmedCompleted returns in-progress bookings the maid marked done
-// but the customer never confirmed before the cutoff. Bookings with an open
-// dispute are excluded so a customer's complaint isn't overridden by auto-pay.
+// but the customer never confirmed before the cutoff.
 func (r *Repository) FindUnconfirmedCompleted(ctx context.Context, cutoff time.Time) ([]Booking, error) {
 	var bookings []Booking
 	err := r.db.WithContext(ctx).

@@ -1370,8 +1370,6 @@ func (s *Service) MaidLocationForCustomer(ctx context.Context, bookingID, caller
 	}, nil
 }
 
-// placeholderCustomerEmail synthesizes a unique per-customer email for Snippe,
-// which requires customer.email even though accounts here are phone-only.
 func placeholderCustomerEmail(phoneNumber string) string {
 	return phoneNumber + "@kazi.noemail"
 }
