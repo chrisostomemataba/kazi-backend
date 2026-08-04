@@ -147,8 +147,7 @@ func (s *Service) expireUnpaidBooking(ctx context.Context, expiredBooking *Booki
 
 // autoConfirmForgottenCompletions completes bookings the maid finished more
 // than 24 hours ago but the customer never confirmed, then releases escrow
-// so the maid is not left unpaid. Bookings under an open dispute are skipped
-// by the repository query, so a customer's complaint blocks auto-payout.
+// so the maid is not left unpaid.
 func (s *Service) autoConfirmForgottenCompletions(ctx context.Context) {
 	cutoff := time.Now().Add(-autoConfirmAfter)
 
