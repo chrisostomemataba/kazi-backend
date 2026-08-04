@@ -384,6 +384,10 @@ func (s *Service) InitiatePayment(ctx context.Context, customerID uuid.UUID, boo
 		return nil, errors.New("booking already paid")
 	}
 
+	if booking.PaymentStatus == "collection_pending" {
+		return nil, errors.New("a payment is already in progress for this booking — please wait for it to resolve before retrying")
+	}
+
 	pricing, err := s.repo.GetBookingPricing(ctx, bookingUUID)
 	if err != nil {
 		return nil, fmt.Errorf("get pricing: %w", err)
